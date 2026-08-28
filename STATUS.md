@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-08-28 (native detection, _Helper removed)
+Last updated: 2026-08-28 (New from catalog)
 
 ## Where it stands
 
@@ -111,6 +111,25 @@ and `5.0.0`, all with `DetectionMethod = Registry`, `distributeContent` and
 * the package folder holds nothing but `Content`, and the temporary artifact folder below
   `%TEMP%` is gone afterwards
 
+### Verified against the manifest repository (2026-08-28)
+
+**New from catalog** reads https://github.com/microsoft/winget-pkgs over HTTPS. The `winget`
+client is deliberately not used - it is a per user MSIX and is missing on Windows Server 2022,
+which is a supported target.
+
+* the hand written YAML reader against the real `7zip.7zip` 26.02 installer manifest: all six
+  installers, all keys, including the nested `InstallerSwitches`, `AppsAndFeaturesEntries` and
+  `InstallationMetadata` maps
+* manifest path derivation for `7zip.7zip`, `Google.Chrome`, `Notepad++.Notepad++` and the
+  four part `Adobe.Acrobat.Reader.64-bit`
+* version listing and descending sort - 26.02 ahead of 26.01, 26.00, 25.01
+* installer ranking picks x64 `wix` over x64 `exe`, which is what makes the row come out as
+  `DetectionMethod = MSI` with the ProductCode instead of a registry lookup
+* the row built from manifest plus installer: `Igor Pavlov / 7-Zip / MSI /
+  {23170F69-40C1-2702-2602-000001000000}`
+* the EXE variant of the same manifest carries `ProductCode: 7-Zip` - the uninstall key the
+  native registry detection needs, so the EXE case usually needs no guessing either
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -156,6 +175,12 @@ it is the tool's own function in `Functions\setup.ps1`.
   once a selection has been made. The start dialog itself came up correctly with the site in
   its title bar.
 * `Edit-RoleCollectionMembership` was verified cmdlet by cmdlet, not through its dialogs.
+* The catalog download itself has not been run: `Save-CatalogInstaller`,
+  `Get-CatalogInstallerEvidence` and the dialogs of `newFromCatalog` are untested. Everything
+  up to and including the parsed manifest and the derived row is verified.
+* `Find-CatalogPackage` walks the repository folders and was not run either - it costs several
+  API calls against a 60 per hour limit, so it wants a deliberate test rather than a casual
+  one.
 * Only `DetectionMethod = Registry` was run against the site. `MSI` and `File` build their
   clauses through the same code path and the same `New-CMDetectionClause*` cmdlets, but
   neither has been published once - the lab has no MSI test package. `Script` was not run

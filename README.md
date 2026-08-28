@@ -46,6 +46,7 @@ The start dialog offers:
 | **Create packages** | Creates PSADT packages for the selected rows of `Apps.csv` |
 | **Create and publish** | Same, and publishes each package as a ConfigMgr application |
 | **Publish packages** | Publishes existing packages (again) |
+| **New from catalog** | Downloads an installer from the winget-pkgs manifests and adds it to `Apps.csv` |
 | **Tools** | Collection maintenance helpers |
 
 The gear icon opens the settings editor for `Config\config.json`.
@@ -79,6 +80,37 @@ buttons:
 * **From EXE...** reads the version resource of a setup EXE.
 
 That replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
+
+## New from catalog
+
+Fetches the usual suspects without hunting for a download link. The source is the manifest
+repository behind winget, [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs),
+read directly over HTTPS - the `winget` client itself is **not** used, because it is a per
+user MSIX and is missing on Windows Server 2022.
+
+1. **Pick** from `Config\catalog.json`, or search the repository for anything else.
+2. **Resolve** the newest version, and say which versions of it `Apps.csv` already holds.
+3. **Confirm** - the dialog names the installer, the URL and the SHA256. Nothing is
+   downloaded before this.
+4. **Download** into `<sourceRoot>\_DL\<Name> - <Version>\`, checked against the hash in the
+   manifest. A file that does not match is deleted.
+5. **Read** the file the same way the **From MSI...** button does, and report its Authenticode
+   signer.
+6. **Check** the finished row in the usual editor, then it goes into `Apps.csv`.
+
+Where a manifest offers several installers, an MSI wins over an EXE: it carries a ProductCode,
+which means native detection and PSADT's zero-config MSI deployment, so nothing has to be
+maintained by hand. For an EXE the uninstall key comes from `AppsAndFeaturesEntries` in the
+manifest - for 7-Zip that is literally `7-Zip`, which is exactly what `DetectionPattern`
+wants.
+
+The flow deliberately stops there. Packaging and publishing stay with **Create packages** and
+**Publish packages**; the download waits in `_DL` under the same `<Name> - <Version>` name the
+package folder will have.
+
+Nothing that is downloaded is ever executed. GitHub allows 60 unauthenticated API requests an
+hour, which is why the curated list stores the package id - resolving a version from it costs
+a single request.
 
 ## Package layout
 

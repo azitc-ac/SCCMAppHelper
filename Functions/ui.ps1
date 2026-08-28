@@ -19,7 +19,7 @@ function Show-StartDialog {
 
     $dlg = New-Object Windows.Window
     $dlg.Title = $Title
-    $dlg.Width = 960
+    $dlg.Width = 1180
     $dlg.Height = 450
     if ($null -ne $Owner) { $dlg.Owner = $Owner; $dlg.WindowStartupLocation = 'CenterOwner' }
     else { $dlg.WindowStartupLocation = 'CenterScreen' }
@@ -44,7 +44,7 @@ function Show-StartDialog {
 
     $uniform = New-Object Windows.Controls.Primitives.UniformGrid
     $uniform.Rows = 1
-    $uniform.Columns = 4
+    $uniform.Columns = 5
     $uniform.Margin = '0,8,0,0'
     [Windows.Controls.Grid]::SetRow($uniform, 1)
     $null = $root.Children.Add($uniform)
@@ -135,6 +135,7 @@ function Show-StartDialog {
         (New-OptionTile -Caption 'Create packages' -Description 'Create PSADT packages on the source share.' -IconElement (New-Glyph -Code 0xE710) -ReturnValue 'CreateNew' -Width $TileWidth),
         (New-OptionTile -Caption 'Create and publish' -Description 'Create packages and publish them as ConfigMgr applications.' -IconElement $iconCreatePublish -ReturnValue 'CreateNewAndPublish' -Width $TileWidth),
         (New-OptionTile -Caption 'Publish packages' -Description 'Publish existing packages as ConfigMgr applications.' -IconElement (New-Glyph -Code 0xE898) -ReturnValue 'PublishExisting' -Width $TileWidth),
+        (New-OptionTile -Caption 'New from catalog' -Description 'Download an installer from the winget-pkgs manifests and add it to Apps.csv.' -IconElement (New-Glyph -Code 0xE896) -ReturnValue 'NewFromCatalog' -Width $TileWidth),
         (New-OptionTile -Caption 'Tools' -Description 'Collection maintenance and reporting helpers.' -IconElement (New-Glyph -Code 0xE90F) -ReturnValue 'Tools' -Width $TileWidth)
     )
     foreach ($tile in $tiles) { $null = $uniform.Children.Add($tile) }
@@ -821,6 +822,108 @@ function Edit-SettingsDialog {
     $dlg.Content = $root
     $null = $dlg.ShowDialog()
     return $true
+}
+
+#endregion
+
+#region --------------------------------------------------------------- catalog
+
+<#
+    Picks a package for "New from catalog": the curated list from catalog.json
+    up front, and a search box for everything else in the manifest repository.
+    Returns an object with Name and PackageId, or $null when cancelled.
+#>
+function Show-CatalogDialog {
+    param(
+        $Packages,
+        [string]$Title = 'New from catalog'
+    )
+
+    $window = New-Object Windows.Window
+    $window.Title = $Title
+    $window.Width = 780
+    $window.Height = 560
+    $window.WindowStartupLocation = 'CenterScreen'
+
+    $grid = New-Object Windows.Controls.Grid
+    $grid.Margin = '12'
+    foreach ($height in 'Auto', '*', 'Auto') {
+        $row = New-Object Windows.Controls.RowDefinition
+        $row.Height = $(if ($height -eq '*') { New-Object Windows.GridLength -ArgumentList 1, ([Windows.GridUnitType]::Star) } else { [Windows.GridLength]::Auto })
+        $null = $grid.RowDefinitions.Add($row)
+    }
+
+    # --- search row ---
+    $searchPanel = New-Object Windows.Controls.DockPanel
+    $searchPanel.Margin = '0,0,0,8'
+    $searchBox = New-Object Windows.Controls.TextBox
+    $searchBox.Padding = '4'
+    $searchBox.VerticalContentAlignment = 'Center'
+    $searchButton = New-Object Windows.Controls.Button
+    $searchButton.Content = 'Search winget-pkgs'
+    $searchButton.Padding = '12,4'
+    $searchButton.Margin = '8,0,0,0'
+    [Windows.Controls.DockPanel]::SetDock($searchButton, 'Right')
+    $null = $searchPanel.Children.Add($searchButton)
+    $null = $searchPanel.Children.Add($searchBox)
+    [Windows.Controls.Grid]::SetRow($searchPanel, 0)
+    $null = $grid.Children.Add($searchPanel)
+
+    # --- list ---
+    $dataGrid = New-Object Windows.Controls.DataGrid
+    $dataGrid.AutoGenerateColumns = $false
+    $dataGrid.IsReadOnly = $true
+    $dataGrid.SelectionMode = 'Single'
+    $dataGrid.SelectionUnit = 'FullRow'
+    foreach ($column in 'Name', 'PackageId') {
+        $col = New-Object Windows.Controls.DataGridTextColumn
+        $col.Header = $column
+        $col.Binding = New-Object Windows.Data.Binding($column)
+        $col.Width = $(if ($column -eq 'Name') { 260 } else { 420 })
+        $null = $dataGrid.Columns.Add($col)
+    }
+    $dataGrid.ItemsSource = @($Packages)
+    [Windows.Controls.Grid]::SetRow($dataGrid, 1)
+    $null = $grid.Children.Add($dataGrid)
+
+    # --- buttons ---
+    $buttons = New-Object Windows.Controls.StackPanel
+    $buttons.Orientation = 'Horizontal'
+    $buttons.HorizontalAlignment = 'Right'
+    $buttons.Margin = '0,10,0,0'
+    $okButton = New-Object Windows.Controls.Button
+    $okButton.Content = 'Next'; $okButton.Padding = '18,6'; $okButton.Margin = '0,0,8,0'; $okButton.IsDefault = $true
+    $cancelButton = New-Object Windows.Controls.Button
+    $cancelButton.Content = 'Cancel'; $cancelButton.Padding = '18,6'; $cancelButton.IsCancel = $true
+    $null = $buttons.Children.Add($okButton)
+    $null = $buttons.Children.Add($cancelButton)
+    [Windows.Controls.Grid]::SetRow($buttons, 2)
+    $null = $grid.Children.Add($buttons)
+
+    $okButton.Add_Click({ if ($dataGrid.SelectedItem) { $window.DialogResult = $true } })
+    $dataGrid.Add_MouseDoubleClick({ if ($dataGrid.SelectedItem) { $window.DialogResult = $true } })
+
+    $searchButton.Add_Click({
+        $query = $searchBox.Text
+        if ([string]::IsNullOrWhiteSpace($query)) { $dataGrid.ItemsSource = @($Packages); return }
+        $window.Cursor = 'Wait'
+        try {
+            $found = Find-CatalogPackage -Query $query
+            if (@($found).Count -eq 0) {
+                [System.Windows.MessageBox]::Show("Nothing found for [$query].", 'New from catalog', 'OK', 'Information') | Out-Null
+            }
+            $dataGrid.ItemsSource = @($found)
+        }
+        catch {
+            [System.Windows.MessageBox]::Show($_.Exception.Message, 'New from catalog', 'OK', 'Warning') | Out-Null
+        }
+        finally { $window.Cursor = 'Arrow' }
+    })
+    $searchBox.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { $searchButton.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) } })
+
+    $window.Content = $grid
+    if ($window.ShowDialog() -ne $true) { return $null }
+    return $dataGrid.SelectedItem
 }
 
 #endregion
