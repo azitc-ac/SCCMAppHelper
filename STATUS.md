@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-08-28 (New from catalog)
+Last updated: 2026-08-29 (the dialogs driven through UI Automation)
 
 ## Where it stands
 
@@ -200,6 +200,30 @@ was set to `File` with `%ProgramFiles%\Notepad++\notepad++.exe`, the silent swit
   an environment variable now gets both views connected with `Or`; a literal path still gets a
   single clause, because there is nothing left to redirect.
 
+### The dialogs, driven for real (2026-08-29)
+
+Every WPF dialog here had only ever been reasoned about; the runs called the functions behind
+them. That is closed now, because the start menu tiles became real controls.
+
+They used to be `Border` elements with one `PreviewMouseLeftButtonUp` handler on the container
+that walked the visual tree to work out which card was hit. That answers a mouse and nothing
+else: no Tab focus, no Space to press, nothing for a screen reader, and no way to drive the
+dialog except by moving a pointer. They are `Button`s now with a `ControlTemplate` that keeps
+the card look, each carrying its return value as `AutomationId`; `Open-SelectDialog` and
+`Show-CatalogDialog` got ids on their grids, search box and buttons.
+
+Driven from a second process through `System.Windows.Automation`:
+
+* the start dialog comes up, all five tiles are found by id and report `invokable=True` and
+  `IsKeyboardFocusable=True` - the keyboard part is new, a `Border` could never do it
+* pressing **Publish packages** produces the selection dialog with 25 rows carrying the real
+  status column (`7-Zip 26.02.00.0 -> Published (this tool)`, `26.00.00.0 -> Published
+  (foreign)`), so `deployApps` was exercised through its dialog rather than around it
+* cancelling returns to the start dialog, and cancelling that ends the tool cleanly
+
+Match windows on their `AutomationId`, not their title: WPF derives a window's automation name
+from its content, and a window whose content is a single control reports that control's name.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -247,14 +271,10 @@ it is the tool's own function in `Functions\setup.ps1`.
 
 ### Still open on a real site
 
-* The WPF selection dialogs were not driven end to end. The run called `New-AppPackage` and
-  `Publish-CMApplication` directly, which is the code path `createApps` and `deployApps` use
-  once a selection has been made. The start dialog itself came up correctly with the site in
-  its title bar.
 * `Edit-RoleCollectionMembership` was verified cmdlet by cmdlet, not through its dialogs.
-* The dialogs of `newFromCatalog` were not clicked - `Show-CatalogDialog` and the confirmation
-  boxes are untested, like every other WPF dialog here. Everything behind them was run
-  function by function.
+* The confirmation boxes of `newFromCatalog` were not driven. `Show-CatalogDialog` now carries
+  automation ids, but the `MessageBox` prompts in front of the download are Win32 dialogs
+  rather than WPF, so they need a different handle.
 * `catalog.json` holds 20 package ids and only `7zip.7zip` and `Notepad++.Notepad++` were
   confirmed against the repository. A wrong id fails with "Not found in the manifest
   repository" and is a one line fix, but they are not verified.
