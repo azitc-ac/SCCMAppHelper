@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-08-28 (first run against a real site)
+Last updated: 2026-08-28 (native detection, _Helper removed)
 
 ## Where it stands
 
@@ -90,6 +90,27 @@ least once to check idempotency.
   here claimed both values produce identical XML - that was a measurement error, the code in
   `Add-CMApplicationSupersedenceForOlderVersions` is correct.
 
+### Verified on the AZI lab site (CM1, 2026-08-28, native detection)
+
+Second run, after detection moved from a PowerShell script to native ConfigMgr clauses and
+the `_Helper` folder was removed. Test applications `SCCMAppHelper Testapp - 3.0.0`, `4.0.0`
+and `5.0.0`, all with `DetectionMethod = Registry`, `distributeContent` and
+`createDeployments` off.
+
+* `New-CMDetectionClauseRegistryKeyValue` twice per application, 64 bit and 32 bit view -
+  key, `DisplayVersion`, `Is64Bit` and the `GreaterEquals` constant all as expected in the
+  `SDMPackageXML`
+* `-Comment` on `Add-`/`Set-CMScriptDeploymentType` carries `SCCMAppHelper 1.0` and comes
+  back as `LocalizedDescription` - that is the tool signature, since a native clause has no
+  script that could hold one
+* `Get-AppPackage` against the real site: the five test applications as
+  `Published (this tool)`, the applications from the older scripts as `Published (foreign)`,
+  `Oracle-19c` as `Not published` because its folder name does not follow `<Name> - <Version>`
+* three publishes of `5.0.0` in a row leave the deployment type at 2 settings, 2 rule
+  references and operator `Or`; the second and third report `Detection unchanged`
+* the package folder holds nothing but `Content`, and the temporary artifact folder below
+  `%TEMP%` is gone afterwards
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -104,6 +125,22 @@ it is the tool's own function in `Functions\setup.ps1`.
   icon into the console and the transcript, is deprecated, and is not idempotent: every
   publish appended another identical rule. Replaced by `Set-CMApplicationSupersedence`.
 * The remaining action cmdlets now get `$null =` for the same reason.
+* `-DetectionClauseConnector` together with `-GroupDetectionClauses` does not work. It is what
+  the documentation suggests, it raises no error, and it silently leaves the rule operator at
+  `And` - which for the 64 bit and the 32 bit registry view would mean the key had to exist in
+  both at once, so nothing would ever be detected. The connector belongs on the clause object:
+  set `Connector` to `Or` on each clause.
+* Detection clauses stack and cannot be cleaned up. They are only ever added, and a clause
+  created together with the deployment type cannot be removed again at all -
+  `Set-CMScriptDeploymentType -RemoveDetectionClause` reports it as "not found" and leaves it
+  in place, while clauses added by a later `Set-` call do get removed. Measured on `3.0.0`:
+  every publish appended two more rules, up to 14, all of them referenced by the rule. The
+  tool now compares the detection first and only touches it when it really differs, then
+  verifies the result. Do not try to fix this with a `-ScriptText` reset - that switches the
+  detection method but leaves the clause pool untouched.
+* `Get-CMDeploymentTypeDetectionClause` has been seen disagreeing with the `SDMPackageXML`
+  (0 clauses reported where the XML held 8). The rule of the enhanced detection method is the
+  ground truth; a mismatch between the two is treated as "not what we want".
 * The content branch decided between distributing and refreshing by asking whether the
   deployment type already existed. A package first published with `distributeContent` off -
   exactly what the working agreement prescribes - therefore never got its content: the
@@ -119,8 +156,11 @@ it is the tool's own function in `Functions\setup.ps1`.
   once a selection has been made. The start dialog itself came up correctly with the site in
   its title bar.
 * `Edit-RoleCollectionMembership` was verified cmdlet by cmdlet, not through its dialogs.
-* Publishing a package built with the older scripts (`Not imported yet`) was not tried,
-  because each of them belongs to an application that already exists in the site.
+* Publishing a package built with the older scripts (`Published (foreign)`) was not tried,
+  because each of them belongs to an application that already exists in the site. That is now
+  the interesting case: such an application has a script or clause detection the tool did not
+  write, and the clause replacement is exactly what cannot be done reliably. Expect the
+  "Detection differs" warning and the verification afterwards to fire.
 
 ## Open items
 
@@ -129,14 +169,17 @@ it is the tool's own function in `Functions\setup.ps1`.
   optionally the package folder. Deliberately left out because it is destructive. When
   building it, mirror `deployApps`: select from the existing applications, show exactly what
   will be deleted, confirm before removing anything.
-* **Clean up the lab.** `SCCMAppHelper Testapp - 1.0.0` and `- 2.0.0`, their four `ins-*`
-  collections, their deployments, the two `Apps.csv` rows and the two package folders under
-  `C:\Sources\Applications` are still on AZI - they are the evidence for the run above.
-  Removing them is exactly the case the retire workflow is for.
-* `distributeContent` and `createDeployments` are back to `true` in `config.json` after the
-  staged run. Set them to `false` again before the first publish against another new site.
-* Packages created before 2026-08-28 may still contain a leftover `_Helper\package.json`.
-  It is ignored; it can be deleted.
+* **Clean up the lab.** `SCCMAppHelper Testapp` in `1.0.0`, `2.0.0`, `3.0.0`, `4.0.0` and
+  `5.0.0`, their `ins-*` collections, the deployments of 1.0.0 and 2.0.0, the five `Apps.csv`
+  rows and the five package folders under `C:\Sources\Applications` are still on AZI - they
+  are the evidence for the runs above. Removing them is exactly the case the retire workflow
+  is for. Note that `3.0.0` (14 rules) and `4.0.0` (4 rules) carry deliberately stacked
+  detection from the clause experiments; `5.0.0` is the clean one.
+* `distributeContent` and `createDeployments` are `false` in `config.json` - that is where the
+  working agreement wants them before a first publish against a new site. Switch them on
+  again for a real run.
+* Packages created before 2026-08-28 may still contain a leftover `_Helper` folder. It is
+  ignored; it can be deleted.
 
 ## Settled decisions
 
@@ -145,9 +188,21 @@ Do not re-litigate these without a reason.
 * **`dev` in collection names means device collection**, not a deployment ring. There is no
   dev/test/prod staging. The prefixes encode purpose: `ins-req` install required, `ins-avl`
   install available, `rol` role, `flt` filter.
-* **No separate metadata file.** A package describes itself: name and version from the folder
-  name, publisher and author from `$adtSession` in `Invoke-AppDeployToolkit.ps1`, detection
-  from the rendered `_Helper\detection.ps1`. `package.json` was removed on 2026-08-28.
+* **No separate metadata file, and nothing beside the content.** A package describes itself:
+  name and version from the folder name, publisher and author from `$adtSession` in
+  `Invoke-AppDeployToolkit.ps1`, detection from its `Apps.csv` row. `package.json` was removed
+  on 2026-08-28, the `_Helper` folder with it - the icon and, for `DetectionMethod = Script`,
+  the detection script are rendered into `%TEMP%` at publish time and removed again. That is
+  what kept `deploy.ps1` thin, and it now applies to everything.
+* **Detection is native wherever ConfigMgr can evaluate it itself** - MSI by ProductCode,
+  Registry by an exact uninstall key, File by path. A script is only for the hard nuts, and it
+  lives in `Content\SupportFiles\detection.ps1` so it travels with the package. Script
+  detection was the default until 2026-08-28 and proved unreliable, and it reproduced an MSI
+  ProductCode through a registry lookup for no reason.
+* **The tool signature lives in the deployment type comment** (`SCCMAppHelper <version>`).
+  It used to sit in the header of the generated detection script, which stops working the
+  moment detection is a native clause. `Get-AppPackage` reads it back to tell
+  `Published (this tool)` from `Published (foreign)`.
 * **MSI packages keep their PSADT metadata empty** on purpose, so PSADT runs its zero-config
   MSI deployment. Publisher and ProductCode are read from the single MSI in `.\Files`.
 * **The folder name is authoritative** for name and version - it is the naming convention the
@@ -156,6 +211,7 @@ Do not re-litigate these without a reason.
   packages created earlier.
 * **Detection scripts write to STDOUT only when the application is detected.** The old
   `detection_v3.ps1` always wrote output, which made ConfigMgr consider every app installed.
+  Still true for `DetectionMethod = Script`.
 * Environment specific values belong in `sites[]` of `config.json`, conventions belong in the
   shared keys next to it.
 
