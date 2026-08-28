@@ -25,7 +25,26 @@ Start-Transcript -Path $log | Out-Null
 
 . "$rootDir\Functions\functions.ps1"
 
+# --- first run -------------------------------------------------------------
+# Nothing configured yet, or a configuration cloned from another environment:
+# offer to read everything from the site instead of editing config.json.
+if (@(Get-CMSiteList).Count -eq 0) {
+    Write-Warn 'No ConfigMgr site configured yet - starting the setup assistant.'
+    if (-not (Start-SetupWizard)) { Stop-Transcript | Out-Null; return }
+}
+
 $config = Get-ActiveConfig
+
+if (-not (Test-DnsName -Name $config.siteServer)) {
+    Write-Warn "Configured site server [$($config.siteServer)] cannot be resolved from this machine."
+    $answer = [System.Windows.MessageBox]::Show(
+        "The configured site server`n`n$($config.siteServer)`n`ncannot be reached from this machine.`n`nRun the setup assistant and connect to a site on this server instead?",
+        'SCCMAppHelper', 'YesNo', 'Question')
+    if ($answer -eq 'Yes') {
+        if (Start-SetupWizard) { $config = Get-ActiveConfig }
+    }
+}
+
 check-prereqs -Config $config
 
 $continue = $true

@@ -17,7 +17,29 @@ Apps.csv  ->  PSADT package on the source share  ->  ConfigMgr application
 .\start-SCCMAppHelper.ps1
 ```
 
-Windows PowerShell 5.1 with the ConfigMgr console installed. The start dialog offers:
+Windows PowerShell 5.1 with the ConfigMgr console installed.
+
+### First run on a new server
+
+Nothing has to be filled into `config.json` by hand. If no site is configured - or the
+configured site server cannot be resolved, which is what happens after cloning the repo into
+a different environment - the setup assistant starts and reads the site itself:
+
+1. **Server**: prefilled with the FQDN of the local machine. Running the tool on the site
+   server means clicking OK.
+2. **Discovery**: site code and provider from `SMS_ProviderLocation`, SQL server and database
+   from the site server registry (falling back to `CM_<SiteCode>`).
+3. **Package share**: pick from the shares of the site server, including their first level of
+   subfolders - that fills the UNC path and the local path in one step. If no share exists
+   yet, the assistant asks for the paths and offers to create the folder.
+4. **Distribution point** or distribution point group, and the limiting collection
+   (read from `SMS00001`, whatever it is named locally).
+5. **Check and save** into the `sites` array of `config.json`, followed by an end to end test.
+
+The assistant is also available later under **Tools -> Add ConfigMgr site**, and
+**Tools -> Check site configuration** re-runs the test at any time.
+
+The start dialog offers:
 
 | Tile | What it does |
 | --- | --- |
@@ -153,6 +175,24 @@ updated plus a content refresh, existing collections and deployments are reused.
 * **Role collection membership** - adds or removes a role collection (`rol-dev-*`) as an
   include rule of the application collections (`ins-*`).
 * **Switch ConfigMgr site** - work against another site of the `sites` list.
+* **Add ConfigMgr site** - the setup assistant described above.
+* **Check site configuration** - tests provider, package share, console module, SQL and the
+  collections of the active site and prints a report.
+
+## Logos
+
+`Logos\<App>.png` becomes the icon of the ConfigMgr application, scaled down to 250x250 if
+needed. A file named exactly like the `Name` column always wins; beyond that the tool falls
+back in this order:
+
+1. the name without a bracketed suffix or trailing version - `7-Zip.png` covers
+   `7-Zip 26.02 (x64 edition)` and `Notepad++.png` covers `Notepad++ (x64)`
+2. the longest logo name that is a prefix of the app name
+3. the longest logo name that starts with the app name - `Oracle_Database_Client.png` covers
+   `Oracle`
+
+Only spaces and underscores count as a boundary, so `PDF` never picks up
+`PDF-XChange Editor.png`. Without a match, `defaultlogo.png` is used.
 
 ## Notes
 

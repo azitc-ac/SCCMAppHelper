@@ -14,6 +14,7 @@ if (-not $rootDir) { $rootDir = Split-Path -Parent $PSScriptRoot }
 if (-not $toolVersion) { $toolVersion = '1.0' }
 
 . "$rootDir\Functions\ui.ps1"
+. "$rootDir\Functions\setup.ps1"
 
 #region --------------------------------------------------------------- output
 
@@ -61,7 +62,10 @@ function Get-CMSiteList {
         return @($BaseConfig.sites)
     }
 
-    # Legacy / single environment configuration.
+    # Legacy / single environment configuration. Without a site code there is
+    # nothing configured yet and the setup assistant takes over.
+    if ([string]::IsNullOrWhiteSpace($BaseConfig.siteCode)) { return @() }
+
     $site = [ordered]@{ name = $BaseConfig.siteCode }
     foreach ($property in $script:SiteProperties) { $site[$property] = $BaseConfig.$property }
     return @([pscustomobject]$site)
@@ -182,6 +186,16 @@ function Get-CMModulePath {
     if ($env:SMS_ADMIN_UI_PATH) {
         $candidates += (Join-Path (Split-Path -Parent $env:SMS_ADMIN_UI_PATH) 'ConfigurationManager.psd1')
     }
+
+    # The console installation directory, for sessions where the environment
+    # variable is missing or the console sits on a non-default drive.
+    try {
+        $setupKey = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\SMS\Setup' -ErrorAction Stop
+        if ($setupKey.'UI Installation Directory') {
+            $candidates += (Join-Path $setupKey.'UI Installation Directory' 'bin\ConfigurationManager.psd1')
+        }
+    }
+    catch { }
     $candidates += @(
         "$env:ProgramFiles\Microsoft Configuration Manager\AdminConsole\bin\ConfigurationManager.psd1",
         "${env:ProgramFiles(x86)}\Microsoft Configuration Manager\AdminConsole\bin\ConfigurationManager.psd1",
@@ -526,6 +540,64 @@ function Resize-IconFile {
     return $Destination
 }
 
+<#
+    Looks for a logo in .\Logos, in decreasing order of confidence:
+
+        1. <AppName>.png                       exact match
+        2. <AppName without "(x64)" / trailing version>.png
+        3. the longest logo name that is a prefix of the app name
+           ("7-Zip" for "7-Zip 26.02 (x64 edition)")
+        4. the longest logo name that starts with the app name
+           ("Oracle_Database_Client" for "Oracle")
+
+    Steps 3 and 4 require a word boundary after the match, so "PDF" never
+    picks up "PDF24 Creator". Dropping a file named exactly like the app
+    always wins.
+#>
+function Find-AppLogo {
+    param(
+        [Parameter(Mandatory = $true)][string]$AppName,
+        [Parameter(Mandatory = $true)][string]$LogoDir
+    )
+
+    $safeName = $AppName -replace '[\\/:*?"<>|]', '_'
+
+    $exact = Join-Path $LogoDir "$safeName.png"
+    if (Test-Path -LiteralPath $exact) { return $exact }
+
+    $trimmed = ($safeName -replace '\s*\([^)]*\)\s*$', '')
+    $trimmed = ($trimmed -replace '\s+v?\d+[\d.]*$', '').Trim()
+    if ($trimmed -and $trimmed -ne $safeName) {
+        $candidate = Join-Path $LogoDir "$trimmed.png"
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+
+    # Only space and underscore count as a boundary: a hyphen is usually part of
+    # the product name itself ("PDF-XChange", "7-Zip"), and treating it as a
+    # separator would let "PDF" match "PDF-XChange Editor".
+    $boundary = '[\s_]'
+    $best = $null
+    foreach ($logo in (Get-ChildItem -LiteralPath $LogoDir -Filter '*.png' -File -ErrorAction SilentlyContinue)) {
+        $base = $logo.BaseName
+        if ($base -eq 'defaultlogo' -or $base.Length -lt 3) { continue }
+
+        $logoIsPrefix = ($safeName.Length -gt $base.Length) -and
+                        $safeName.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase) -and
+                        ($safeName[$base.Length] -match $boundary)
+
+        $appIsPrefix  = ($base.Length -gt $safeName.Length) -and
+                        $base.StartsWith($safeName, [System.StringComparison]::OrdinalIgnoreCase) -and
+                        ($base[$safeName.Length] -match $boundary)
+
+        if ($logoIsPrefix -or $appIsPrefix) {
+            if (-not $best -or $base.Length -gt $best.BaseName.Length) { $best = $logo }
+        }
+    }
+
+    if ($best) { return $best.FullName }
+    return $null
+}
+
 function Resolve-AppLogo {
     param(
         [Parameter(Mandatory = $true)][string]$AppName,
@@ -533,9 +605,9 @@ function Resolve-AppLogo {
     )
 
     $logoDir = Join-Path $rootDir 'Logos'
-    $candidate = Join-Path $logoDir ("{0}.png" -f ($AppName -replace '[\\/:*?"<>|]', '_'))
+    $candidate = Find-AppLogo -AppName $AppName -LogoDir $logoDir
 
-    if (Test-Path -LiteralPath $candidate) { Write-Info "Using logo [$candidate]" }
+    if ($candidate) { Write-Info ("Using logo [{0}]" -f (Split-Path -Leaf $candidate)) }
     else {
         $candidate = Join-Path $logoDir 'defaultlogo.png'
         Write-Info 'No app logo found - using the default logo.'
@@ -1157,6 +1229,8 @@ function Show-ToolsMenu {
         [pscustomobject]@{ Tool = 'Rebuild outdated apps';         Description = 'Refill the collection of clients running an outdated version.' }
         [pscustomobject]@{ Tool = 'Role collection membership';    Description = 'Add or remove a role collection in the application collections.' }
         [pscustomobject]@{ Tool = 'Switch ConfigMgr site';         Description = 'Work against a different site of the "sites" list in config.json.' }
+        [pscustomobject]@{ Tool = 'Add ConfigMgr site';            Description = 'Setup assistant: connect to a server and read its settings automatically.' }
+        [pscustomobject]@{ Tool = 'Check site configuration';      Description = 'Test provider, share, console module, SQL and collections of the active site.' }
     )
 
     $selection = Open-SelectDialog -data $tools -title 'Tools'
@@ -1168,6 +1242,8 @@ function Show-ToolsMenu {
         'Rebuild outdated apps'      { Update-OutdatedAppsCollection }
         'Role collection membership' { Edit-RoleCollectionMembership }
         'Switch ConfigMgr site'      { $null = Get-ActiveConfig -ForceSiteSelection }
+        'Add ConfigMgr site'         { $null = Start-SetupWizard }
+        'Check site configuration'   { $null = Test-SiteConfiguration }
     }
 }
 
