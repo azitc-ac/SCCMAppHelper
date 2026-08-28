@@ -98,6 +98,21 @@ That replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
 Legacy packages whose PSADT root is the package folder itself are detected and handled as
 well (`packageLayout = Flat`).
 
+### Importing existing packages
+
+Every folder below `sourceRoot` that contains an `Invoke-AppDeployToolkit.ps1` counts as a
+package, even without a `_Helper` folder - packages built with the older scripts therefore
+show up under **Publish packages** with the status `Not imported yet`. Publishing such a
+package writes the missing `_Helper` folder first:
+
+* name and version come from the folder name (`<Name> - <Version>`, split at the last
+  separator)
+* publisher and detection settings come from `Apps.csv` if a row with that name and version
+  exists, otherwise from `AppVendor` in the PSADT script - only if both are missing does the
+  tool ask
+* an existing `SupportFiles\logo.png` is reused as the application icon
+* apps that were not in `Apps.csv` are appended to it, so the master list stays complete
+
 `deploy.ps1` is intentionally thin: it only calls `Publish-CMApplication` from the tool, so
 fixes in the tool also apply to packages created earlier.
 
