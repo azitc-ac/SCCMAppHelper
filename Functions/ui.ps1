@@ -6,6 +6,33 @@
 Add-Type -AssemblyName PresentationCore      -ErrorAction SilentlyContinue | Out-Null
 Add-Type -AssemblyName PresentationFramework -ErrorAction SilentlyContinue | Out-Null
 Add-Type -AssemblyName System.Windows.Forms  -ErrorAction SilentlyContinue | Out-Null
+Add-Type -AssemblyName UIAutomationTypes      -ErrorAction SilentlyContinue | Out-Null
+
+<#
+    The start menu tiles are Buttons wearing this template, so they keep the
+    card look while staying a real control: reachable with Tab, pressed with
+    Space, announced by a screen reader, and drivable through the UI Automation
+    Invoke pattern. A Border with a mouse handler is none of those things.
+#>
+$script:TileTemplateXaml = @'
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 TargetType="Button">
+    <Border x:Name="tile" Background="White" BorderBrush="LightGray" BorderThickness="1"
+            CornerRadius="6" Padding="12" SnapsToDevicePixels="True">
+        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+    <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="tile" Property="BorderBrush" Value="DodgerBlue" />
+        </Trigger>
+        <Trigger Property="IsKeyboardFocused" Value="True">
+            <Setter TargetName="tile" Property="BorderBrush" Value="DodgerBlue" />
+            <Setter TargetName="tile" Property="BorderThickness" Value="2" />
+        </Trigger>
+    </ControlTemplate.Triggers>
+</ControlTemplate>
+'@
 
 #region ----------------------------------------------------------- start menu
 
@@ -24,6 +51,7 @@ function Show-StartDialog {
     if ($null -ne $Owner) { $dlg.Owner = $Owner; $dlg.WindowStartupLocation = 'CenterOwner' }
     else { $dlg.WindowStartupLocation = 'CenterScreen' }
     $dlg.ResizeMode = 'NoResize'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($dlg, 'StartDialog')
 
     $root = New-Object Windows.Controls.Grid
     $root.Margin = '16'
@@ -70,20 +98,19 @@ function Show-StartDialog {
             [int]$Width = 220
         )
 
-        $border = New-Object Windows.Controls.Border
-        $border.BorderBrush = [System.Windows.Media.Brushes]::LightGray
-        $border.BorderThickness = '1'
-        $border.CornerRadius = '6'
-        $border.Margin = '6'
-        $border.Padding = '12'
-        $border.Background = [System.Windows.Media.Brushes]::White
-        $border.SnapsToDevicePixels = $true
-        $border.Width = $Width
-        $border.Cursor = 'Hand'
-        $border.Tag = $ReturnValue
-
-        $border.Add_MouseEnter({ param($s, $e) $s.BorderBrush = [System.Windows.Media.Brushes]::DodgerBlue })
-        $border.Add_MouseLeave({ param($s, $e) $s.BorderBrush = [System.Windows.Media.Brushes]::LightGray })
+        # A real Button, not a Border with a mouse handler: it can be reached
+        # with Tab and pressed with Space, a screen reader announces it, and it
+        # exposes the Invoke pattern so the dialog can be driven by UI
+        # Automation. The template keeps the card look the Border had.
+        $tile = New-Object Windows.Controls.Button
+        $tile.Template = [Windows.Markup.XamlReader]::Parse($script:TileTemplateXaml)
+        $tile.Margin = '6'
+        $tile.Width = $Width
+        $tile.Cursor = 'Hand'
+        $tile.Tag = $ReturnValue
+        $tile.ToolTip = $Description
+        [Windows.Automation.AutomationProperties]::SetAutomationId($tile, $ReturnValue)
+        [Windows.Automation.AutomationProperties]::SetName($tile, $Caption)
 
         $stack = New-Object Windows.Controls.StackPanel
         $stack.Orientation = 'Vertical'
@@ -119,8 +146,8 @@ function Show-StartDialog {
 
         $null = $stack.Children.Add($lbl)
         $null = $stack.Children.Add($desc)
-        $border.Child = $stack
-        return $border
+        $tile.Content = $stack
+        return $tile
     }
 
     # Create + publish tile shows both glyphs next to each other.
@@ -138,25 +165,12 @@ function Show-StartDialog {
         (New-OptionTile -Caption 'New from catalog' -Description 'Download an installer from the winget-pkgs manifests and add it to Apps.csv.' -IconElement (New-Glyph -Code 0xE896) -ReturnValue 'NewFromCatalog' -Width $TileWidth),
         (New-OptionTile -Caption 'Tools' -Description 'Collection maintenance and reporting helpers.' -IconElement (New-Glyph -Code 0xE90F) -ReturnValue 'Tools' -Width $TileWidth)
     )
-    foreach ($tile in $tiles) { $null = $uniform.Children.Add($tile) }
-
-    # One click handler for the whole tile area - works on icon, text and padding.
-    $uniform.Add_PreviewMouseLeftButtonUp({
-        param($s, $e)
-
-        $elem = $e.OriginalSource
-        $borderFound = $null
-        while ($null -ne $elem -and $null -eq $borderFound) {
-            if ($elem -is [Windows.Controls.Border]) { $borderFound = $elem }
-            elseif ($elem -is [System.Windows.FrameworkElement] -and $null -ne $elem.Parent) { $elem = $elem.Parent }
-            else { $elem = [System.Windows.Media.VisualTreeHelper]::GetParent($elem) }
-        }
-
-        if ($null -ne $borderFound -and -not [string]::IsNullOrWhiteSpace([string]$borderFound.Tag)) {
-            $dlg.Tag = [string]$borderFound.Tag
-            $dlg.Close()
-        }
-    })
+    # The handler is attached here rather than inside New-OptionTile, so that it
+    # closes over $dlg while Show-StartDialog is still on the stack.
+    foreach ($tile in $tiles) {
+        $null = $uniform.Children.Add($tile)
+        $tile.Add_Click({ param($s, $e) $dlg.Tag = [string]$s.Tag; $dlg.Close() })
+    }
 
     $footer = New-Object Windows.Controls.Grid
     $footer.Margin = '0,14,0,0'
@@ -169,6 +183,7 @@ function Show-StartDialog {
 
     $btnSettings = New-Object Windows.Controls.Button
     $btnSettings.ToolTip = 'Settings'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($btnSettings, 'Settings')
     $btnSettings.Padding = '10,6'
     $btnSettings.MinWidth = 40
     $btnSettings.HorizontalAlignment = 'Left'
@@ -187,6 +202,7 @@ function Show-StartDialog {
     $spClose.HorizontalAlignment = 'Right'
     $btnClose = New-Object Windows.Controls.Button
     $btnClose.Content = 'Cancel'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($btnClose, 'Cancel')
     $btnClose.Padding = '14,6'
     $btnClose.Add_Click({ $dlg.Tag = 'Cancel'; $dlg.Close() })
     $null = $spClose.Children.Add($btnClose)
