@@ -250,13 +250,13 @@ function Get-CMModulePath {
 
     # The console installation directory, for sessions where the environment
     # variable is missing or the console sits on a non-default drive.
-    try {
-        $setupKey = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\SMS\Setup' -ErrorAction Stop
-        if ($setupKey.'UI Installation Directory') {
-            $candidates += (Join-Path $setupKey.'UI Installation Directory' 'bin\ConfigurationManager.psd1')
-        }
+    # SilentlyContinue, not try/catch: the console user may not be able to read
+    # this key, and a caught terminating error still shows up in the transcript as
+    # "TerminatingError(Get-ItemProperty)", which reads like a failure but is not.
+    $setupKey = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\SMS\Setup' -ErrorAction SilentlyContinue
+    if ($setupKey -and $setupKey.'UI Installation Directory') {
+        $candidates += (Join-Path $setupKey.'UI Installation Directory' 'bin\ConfigurationManager.psd1')
     }
-    catch { }
     $candidates += @(
         "$env:ProgramFiles\Microsoft Configuration Manager\AdminConsole\bin\ConfigurationManager.psd1",
         "${env:ProgramFiles(x86)}\Microsoft Configuration Manager\AdminConsole\bin\ConfigurationManager.psd1",
