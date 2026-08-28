@@ -908,15 +908,28 @@ function New-AppDetectionClause {
             $filePath = Split-Path -Parent $App.DetectionPattern
             $fileName = Split-Path -Leaf   $App.DetectionPattern
             if (-not $filePath) { throw "DetectionPattern [$($App.DetectionPattern)] is not a full file path." }
-            $clauses = @(
-                if ($hasVersion) {
-                    New-CMDetectionClauseFile -Path $filePath -FileName $fileName -Value `
+
+            # Is64Bit decides how the client resolves %ProgramFiles% and
+            # %SystemRoot%\System32. Without it the clause is evaluated in the 32
+            # bit view, %ProgramFiles% becomes "Program Files (x86)", and an x64
+            # application is never found there. A path holding an environment
+            # variable therefore gets both views connected with Or, exactly like
+            # the two registry views; a literal path needs only one clause,
+            # because there is nothing left to redirect.
+            $views = if ($App.DetectionPattern -match '%') { @($true, $false) } else { @($true) }
+
+            foreach ($is64Bit in $views) {
+                $clauseParams = @{ Path = $filePath; FileName = $fileName }
+                if ($is64Bit) { $clauseParams['Is64Bit'] = $true }
+
+                $clauses += if ($hasVersion) {
+                    New-CMDetectionClauseFile @clauseParams -Value `
                         -PropertyType Version -ExpressionOperator GreaterEquals -ExpectedValue $App.Version
                 }
                 else {
-                    New-CMDetectionClauseFile -Path $filePath -FileName $fileName -Existence
+                    New-CMDetectionClauseFile @clauseParams -Existence
                 }
-            )
+            }
         }
 
         'Registry' {

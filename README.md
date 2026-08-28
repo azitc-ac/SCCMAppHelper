@@ -193,6 +193,13 @@ exactly the uninstall key of an MSI installed product. Both registry views are c
 connected with **Or**, because a 32 bit product on a 64 bit client registers below
 `Wow6432Node`.
 
+For `File`, the pattern is the full path of the installed file, environment variables included
+- `%ProgramFiles%\Notepad++\notepad++.exe`. A path holding a variable gets both views as well,
+again connected with **Or**: the client resolves `%ProgramFiles%` and `%SystemRoot%\System32`
+differently depending on which one the clause asks for, and the 32 bit view alone would look
+in `Program Files (x86)` and never find an x64 application. A literal path gets a single
+clause, because there is nothing left to redirect.
+
 A version that does not parse as a `[version]` (`19c` and the like) turns the clause into an
 existence check.
 
