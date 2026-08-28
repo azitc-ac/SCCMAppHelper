@@ -156,6 +156,10 @@ it is the tool's own function in `Functions\setup.ps1`.
   once a selection has been made. The start dialog itself came up correctly with the site in
   its title bar.
 * `Edit-RoleCollectionMembership` was verified cmdlet by cmdlet, not through its dialogs.
+* Only `DetectionMethod = Registry` was run against the site. `MSI` and `File` build their
+  clauses through the same code path and the same `New-CMDetectionClause*` cmdlets, but
+  neither has been published once - the lab has no MSI test package. `Script` was not run
+  either since the rewrite.
 * Publishing a package built with the older scripts (`Published (foreign)`) was not tried,
   because each of them belongs to an application that already exists in the site. That is now
   the interesting case: such an application has a script or clause detection the tool did not
