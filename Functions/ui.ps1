@@ -282,7 +282,9 @@ function Open-EditDialog {
     param(
         [hashtable]$item,
         [string]$title,
-        [string[]]$PropertyOrder
+        [string[]]$PropertyOrder,
+        # Setup dialogs are not about a setup file - hides "From MSI/EXE".
+        [switch]$NoFilePrefill
     )
 
     $window = New-Object Windows.Window
@@ -390,8 +392,10 @@ function Open-EditDialog {
     $buttonPanel = New-Object Windows.Controls.StackPanel
     $buttonPanel.Orientation = 'Horizontal'
     $buttonPanel.HorizontalAlignment = 'Right'
-    $null = $buttonPanel.Children.Add($msiButton)
-    $null = $buttonPanel.Children.Add($exeButton)
+    if (-not $NoFilePrefill) {
+        $null = $buttonPanel.Children.Add($msiButton)
+        $null = $buttonPanel.Children.Add($exeButton)
+    }
     $null = $buttonPanel.Children.Add($okButton)
     $null = $buttonPanel.Children.Add($cancelButton)
 

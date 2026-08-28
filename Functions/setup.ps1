@@ -201,7 +201,7 @@ function Start-SetupWizard {
 
     # --- 1) which server ------------------------------------------------------
     $localName = Get-LocalServerName
-    $answer = Open-EditDialog -title 'ConfigMgr site - step 1 of 4: server' -PropertyOrder @('SiteServer') -item ([ordered]@{
+    $answer = Open-EditDialog -NoFilePrefill -title 'ConfigMgr site - step 1 of 4: server' -PropertyOrder @('SiteServer') -item ([ordered]@{
         SiteServer = $localName
     })
     $answer = $answer | Where-Object { $_ -isnot [int] }
@@ -259,7 +259,7 @@ function Start-SetupWizard {
         # No share yet (typical on a fresh lab server) or nothing selected -
         # ask for the paths instead of leaving the wizard in a dead end.
         Write-Warn 'No package share picked - asking for the paths.'
-        $shareAnswer = Open-EditDialog -title 'Step 2 of 4: package share (none found - please enter)' -PropertyOrder @('SourceRoot', 'SourceRootLocal') -item ([ordered]@{
+        $shareAnswer = Open-EditDialog -NoFilePrefill -title 'Step 2 of 4: package share (none found - please enter)' -PropertyOrder @('SourceRoot', 'SourceRootLocal') -item ([ordered]@{
             SourceRoot      = ('\\{0}\Sources\Applications' -f $provider.ProviderMachine)
             SourceRootLocal = if (Test-IsLocalComputer -ComputerName $server) { 'C:\Sources\Applications' } else { '' }
         })
@@ -309,7 +309,7 @@ function Start-SetupWizard {
     catch { Write-Warn ("Site drive not available ({0}) - distribution point and limiting collection stay at their defaults." -f $_.Exception.Message) }
 
     # --- 5) confirm and save --------------------------------------------------
-    $confirmed = Open-EditDialog -title 'Step 4 of 4: check and save' -PropertyOrder ([string[]]$site.Keys) -item $site
+    $confirmed = Open-EditDialog -NoFilePrefill -title 'Step 4 of 4: check and save' -PropertyOrder ([string[]]$site.Keys) -item $site
     $confirmed = $confirmed | Where-Object { $_ -isnot [int] }
     if (-not $confirmed) { Write-Warn 'Setup cancelled.'; return $null }
 

@@ -141,7 +141,7 @@ ConfigMgr environments, all remaining keys are shared across sites.
 | `sourceRootLocal` | Local path of the same share, used when the tool runs on the site server |
 | `distributionPointName` / `distributionPointGroupName` | Distribution target (group wins if both are set) |
 | `limitingCollectionName` | Limiting collection for new collections |
-| `applicationFolderPath`, `collectionFolderPath` | Optional console folders, with or without the site drive: `Application\Apps` is expanded to `<siteCode>:\Application\Apps` |
+| `applicationFolderPath`, `collectionFolderPath` | Optional console folders for new applications and collections. `Apps` is enough - site code and root node are filled in (`<siteCode>:\Application\Apps` and `<siteCode>:\DeviceCollection\Apps`), and missing folders are created. Empty means the console root. |
 
 With a single site nothing is asked. With several sites the tool asks once per session and
 remembers the choice; **Tools -> Switch ConfigMgr site** changes it, and `activeSite`

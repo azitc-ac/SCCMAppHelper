@@ -132,18 +132,66 @@ function Get-ActiveConfig {
 }
 
 <#
-    Console folder paths may be configured with or without the site drive
-    prefix, so the same config works against several sites.
+    Console folder paths may be configured in any of these ways - the site code
+    and the provider root node are filled in as needed, so the same config also
+    works against another site:
+
+        Apps                     -> <SiteCode>:\Application\Apps
+        Application\Apps         -> <SiteCode>:\Application\Apps
+        CCL:\Application\Apps    -> <SiteCode>:\Application\Apps
 #>
 function Resolve-CMFolderPath {
     param(
         [string]$FolderPath,
-        $Config
+        $Config,
+        [string]$RootNode
     )
 
     if ([string]::IsNullOrWhiteSpace($FolderPath)) { return $null }
-    if ($FolderPath -match '^[A-Za-z0-9]{3}:\\') { return $FolderPath }
-    return ('{0}:\{1}' -f $Config.siteCode, $FolderPath.TrimStart('\'))
+
+    $path = $FolderPath
+    if ($path -match '^[A-Za-z0-9]{3}:\\(.*)$') { $path = $Matches[1] }
+    $path = $path.Trim('\')
+    if (-not $path) { return $null }
+
+    if ($RootNode -and $path -notmatch ('^{0}(\\|$)' -f [regex]::Escape($RootNode))) {
+        $path = "$RootNode\$path"
+    }
+
+    return ('{0}:\{1}' -f $Config.siteCode, $path)
+}
+
+<#
+    Creates a console folder including missing intermediate levels, so a folder
+    configured in config.json does not have to exist in the console first.
+    Must run inside the site drive.
+#>
+function New-CMFolderPath {
+    param([Parameter(Mandatory = $true)][string]$FolderPath)
+
+    if (Test-Path -LiteralPath $FolderPath) { return $true }
+
+    $segments = $FolderPath -split '\\'
+    $current = $segments[0]          # "<SiteCode>:"
+    if ($segments.Count -lt 3) { return $false }
+
+    $current = "$current\$($segments[1])"   # provider root node, always exists
+    for ($i = 2; $i -lt $segments.Count; $i++) {
+        $next = "$current\$($segments[$i])"
+        if (-not (Test-Path -LiteralPath $next)) {
+            try {
+                $null = New-Item -Path $current -Name $segments[$i] -ErrorAction Stop
+                Write-Ok "Console folder created: $next"
+            }
+            catch {
+                Write-Warn ("Console folder [{0}] could not be created: {1}" -f $next, $_.Exception.Message)
+                return $false
+            }
+        }
+        $current = $next
+    }
+
+    return $true
 }
 
 function check-prereqs {
@@ -786,8 +834,8 @@ function Publish-CMApplication {
             $application = New-CMApplication @newAppParams
             Write-Ok "Application created: $appFullName"
 
-            $applicationFolder = Resolve-CMFolderPath -FolderPath $Config.applicationFolderPath -Config $Config
-            if ($applicationFolder) {
+            $applicationFolder = Resolve-CMFolderPath -FolderPath $Config.applicationFolderPath -Config $Config -RootNode 'Application'
+            if ($applicationFolder -and (New-CMFolderPath -FolderPath $applicationFolder)) {
                 try {
                     Move-CMObject -FolderPath $applicationFolder -InputObject $application -ErrorAction Stop
                     Write-Ok "Moved to console folder [$applicationFolder]"
@@ -858,8 +906,8 @@ function Publish-CMApplication {
                         -RefreshType Periodic -RefreshSchedule $schedule -ErrorAction Stop
                     Write-Ok "Collection created: $collectionName"
 
-                    $collectionFolder = Resolve-CMFolderPath -FolderPath $Config.collectionFolderPath -Config $Config
-                    if ($collectionFolder) {
+                    $collectionFolder = Resolve-CMFolderPath -FolderPath $Config.collectionFolderPath -Config $Config -RootNode 'DeviceCollection'
+                    if ($collectionFolder -and (New-CMFolderPath -FolderPath $collectionFolder)) {
                         try { Move-CMObject -FolderPath $collectionFolder -InputObject $collection -ErrorAction Stop }
                         catch { Write-Warn ("Could not move the collection: {0}" -f $_.Exception.Message) }
                     }
