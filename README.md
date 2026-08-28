@@ -61,8 +61,8 @@ deployment type name and the base for every collection name.
 | `Publisher` | Manufacturer, ends up in the ConfigMgr application and in PSADT |
 | `Name` | Product name, exactly as it appears in Programs and Features |
 | `Version` | Product version |
-| `DetectionMethod` | `Registry` (default), `MSI`, `File` or `Custom` |
-| `DetectionPattern` | `Registry`: DisplayName pattern (default `Name*`) - `File`: full path of the file to check |
+| `DetectionMethod` | `Registry` (default), `MSI`, `File` or `Script` |
+| `DetectionPattern` | `Registry`: uninstall key (empty = the ProductCode) - `File`: full path of the file to check |
 | `ProductCode` | MSI ProductCode for `DetectionMethod = MSI` |
 | `InstallCmd` | Optional PSADT code inserted into the install section |
 | `UninstallCmd` | Optional PSADT code inserted into the uninstall section |
@@ -88,11 +88,14 @@ That replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
         Invoke-AppDeployToolkit.ps1
         Files\
         Config\config.psd1       <- log path patched to psadtLogPath
-    _Helper\                     <- tool files, not part of the content
-        deploy.ps1               <- publishes this package to ConfigMgr
-        detection.ps1            <- generated detection script
-        logo.png                 <- application icon, resized to max. 250x250
+        SupportFiles\
+            detection.ps1        <- optional, only for DetectionMethod = Script
+            logo.png             <- optional, wins over Logos\
 ```
+A package holds its PSADT content and nothing else. The application icon and,
+where one is needed, the detection script are rendered into a temporary folder
+at publish time and removed again afterwards - so a fix in the tool reaches
+packages built with an earlier version without touching them.
 
 Legacy packages whose PSADT root is the package folder itself are detected and handled as
 well (`packageLayout = Flat`).
@@ -100,9 +103,15 @@ well (`packageLayout = Flat`).
 ### Importing existing packages
 
 Every folder below `sourceRoot` that contains an `Invoke-AppDeployToolkit.ps1` counts as a
-package, even without a `_Helper` folder - packages built with the older scripts therefore
-show up under **Publish packages** with the status `Not imported yet`. Publishing such a
-package writes the missing `_Helper` folder first:
+package - that is the only condition. The status column asks ConfigMgr rather than the share:
+
+| Status | Meaning |
+| --- | --- |
+| `Not published` | no application `<Name> - <Version>` in the site |
+| `Published (this tool)` | its deployment type carries the tool signature |
+| `Published (foreign)` | it exists but was created by hand or by the older scripts - publishing overwrites its detection |
+
+Publishing a package the master list does not know yet takes it over first:
 
 * name and version come from the folder name (`<Name> - <Version>`, split at the last
   separator)
@@ -111,9 +120,6 @@ package writes the missing `_Helper` folder first:
   tool ask
 * an existing `SupportFiles\logo.png` is reused as the application icon
 * apps that were not in `Apps.csv` are appended to it, so the master list stays complete
-
-`deploy.ps1` is intentionally thin: it only calls `Publish-CMApplication` from the tool, so
-fixes in the tool also apply to packages created earlier.
 
 ### Where the metadata lives
 
@@ -125,7 +131,7 @@ There is no separate metadata file - a package describes itself:
 | Publisher | `AppVendor` in the `$adtSession` block of `Invoke-AppDeployToolkit.ps1` |
 | Author, date | `AppScriptAuthor` / `AppScriptDate` in the same block |
 | Description | `Notes` of the matching `Apps.csv` row, otherwise the name |
-| Detection | the rendered `_Helper\detection.ps1` |
+| Detection | the `Apps.csv` row - rendered into clauses or a script at publish time |
 
 **MSI packages** are the deliberate exception. When `DetectionMethod` is `MSI`, the tool
 leaves `AppVendor`, `AppName` and `AppVersion` empty so PSADT runs its zero-config MSI
@@ -136,9 +142,33 @@ detection is by ProductCode.
 `$adtSession` is read through the PowerShell AST, so reformatting or double quotes do not
 break it.
 
-## Detection scripts
+## Detection
 
-ConfigMgr script detection evaluates:
+Detection is native wherever ConfigMgr can evaluate it itself - the client checks a clause
+directly, with no script host, no execution context and no timeout involved.
+
+| `DetectionMethod` | Clause | `DetectionPattern` holds |
+| --- | --- | --- |
+| `MSI` | Windows Installer, ProductCode, `ProductVersion >= Version` | nothing - the ProductCode column, or the single MSI in `.\Files` |
+| `Registry` | `DisplayVersion >= Version` below the uninstall key | the uninstall key |
+| `File` | file version `>= Version`, existence when the version is not comparable | the full path of the file |
+| `Script` | a PowerShell script | nothing |
+
+For `Registry`, a bare name is taken below
+`SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`, a value already starting with
+`SOFTWARE\` is used as it is, and an empty pattern falls back to the ProductCode - which is
+exactly the uninstall key of an MSI installed product. Both registry views are checked and
+connected with **Or**, because a 32 bit product on a 64 bit client registers below
+`Wow6432Node`.
+
+A version that does not parse as a `[version]` (`19c` and the like) turns the clause into an
+existence check.
+
+### When a clause is not enough
+
+`DetectionMethod = Script` reads `Content\SupportFiles\detection.ps1` from the package, so
+hand written detection travels with the content. The tool copies it verbatim and only
+prepends its signature. ConfigMgr script detection evaluates:
 
 | Result | Meaning |
 | --- | --- |
@@ -146,11 +176,17 @@ ConfigMgr script detection evaluates:
 | exit code 0 + no output | application is **not** installed |
 | exit code <> 0 | detection failed |
 
-All templates in `Templates\` follow that contract - they only write to STDOUT when the
-application really is detected, and they log every decision to `psadtLogPath`.
+The templates in `Templates\` follow that contract - they only write to STDOUT when the
+application really is detected, and they log every decision to `psadtLogPath`. `Custom` is
+still accepted as the former name of this method.
 
-`DetectionMethod = Custom` keeps an existing `_Helper\detection.ps1` untouched, so hand
-written detection logic survives a re-run.
+### Changing the detection of a published application
+
+Detection clauses can only be added, never replaced: a clause created together with the
+deployment type cannot be removed again - `Set-CMScriptDeploymentType` reports it as "not
+found" and leaves it in place. The tool therefore compares the detection first and only
+touches it when it really differs, and verifies the result afterwards. If a deployment type
+is left with more rules than it should have, the tool says so - correct it in the console.
 
 ## Configuration
 
