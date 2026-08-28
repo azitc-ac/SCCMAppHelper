@@ -129,6 +129,18 @@ which is a supported target.
   {23170F69-40C1-2702-2602-000001000000}`
 * the EXE variant of the same manifest carries `ProductCode: 7-Zip` - the uninstall key the
   native registry detection needs, so the EXE case usually needs no guessing either
+* a real download: `7z2602-x64.msi`, 1.9 MB, into `C:\Sources\Applications\_DL\7-Zip - 26.02\`.
+  The SHA256 matches the manifest, and the MSI reads back as `7-Zip 26.02 (x64 edition) /
+  26.02.00.0 / Igor Pavlov / {23170F69-40C1-2702-2602-000001000000}` - the same ProductCode the
+  manifest states.
+* the hash check was tested from the failing side too: the same download with a wrong expected
+  hash is rejected and the file deleted, nothing left behind
+* `Find-CatalogPackage` for `notepad`: `Notepad++.Notepad++` and `Notepad2mod.Notepad2mod`, 2.9
+  seconds
+* **the 7-Zip MSI is not Authenticode signed** (`NotSigned`). The very first package tried is
+  already one where enforcing a signature would have blocked a legitimate download - reporting
+  the signer and leaving the decision to the person at the dialog is the right call, and the
+  warning does fire.
 
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
@@ -175,16 +187,18 @@ it is the tool's own function in `Functions\setup.ps1`.
   once a selection has been made. The start dialog itself came up correctly with the site in
   its title bar.
 * `Edit-RoleCollectionMembership` was verified cmdlet by cmdlet, not through its dialogs.
-* The catalog download itself has not been run: `Save-CatalogInstaller`,
-  `Get-CatalogInstallerEvidence` and the dialogs of `newFromCatalog` are untested. Everything
-  up to and including the parsed manifest and the derived row is verified.
-* `Find-CatalogPackage` walks the repository folders and was not run either - it costs several
-  API calls against a 60 per hour limit, so it wants a deliberate test rather than a casual
-  one.
-* Only `DetectionMethod = Registry` was run against the site. `MSI` and `File` build their
-  clauses through the same code path and the same `New-CMDetectionClause*` cmdlets, but
-  neither has been published once - the lab has no MSI test package. `Script` was not run
-  either since the rewrite.
+* The dialogs of `newFromCatalog` were not clicked - `Show-CatalogDialog` and the confirmation
+  boxes are untested, like every other WPF dialog here. Everything behind them was run
+  function by function.
+* `catalog.json` holds 20 package ids and only `7zip.7zip` and `Notepad++.Notepad++` were
+  confirmed against the repository. A wrong id fails with "Not found in the manifest
+  repository" and is a one line fix, but they are not verified.
+* Only `DetectionMethod = Registry` was published against the site. `MSI` and `File` build
+  their clauses through the same code path and the same `New-CMDetectionClause*` cmdlets, but
+  neither has been published once, and `Script` was not run since the rewrite. `New from
+  catalog` produces `MSI` rows, so that is now the interesting gap - and the downloaded 7-Zip
+  26.02 is the obvious candidate, since the site holds `7-Zip - 26.00.00.0` and a publish
+  would exercise the MSI clause and supersedence in one go.
 * Publishing a package built with the older scripts (`Published (foreign)`) was not tried,
   because each of them belongs to an application that already exists in the site. That is now
   the interesting case: such an application has a script or clause detection the tool did not
@@ -204,6 +218,9 @@ it is the tool's own function in `Functions\setup.ps1`.
   are the evidence for the runs above. Removing them is exactly the case the retire workflow
   is for. Note that `3.0.0` (14 rules) and `4.0.0` (4 rules) carry deliberately stacked
   detection from the clause experiments; `5.0.0` is the clean one.
+* `C:\Sources\Applications\_DL\7-Zip - 26.02\7z2602-x64.msi` is the evidence for the catalog
+  download. It is a genuinely newer version than the `7-Zip - 26.00.00.0` in the site, so it is
+  worth keeping rather than deleting.
 * `distributeContent` and `createDeployments` are `false` in `config.json` - that is where the
   working agreement wants them before a first publish against a new site. Switch them on
   again for a real run.
