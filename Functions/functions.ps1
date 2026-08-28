@@ -1199,7 +1199,7 @@ function Publish-CMApplication {
             $applicationFolder = Resolve-CMFolderPath -FolderPath $Config.applicationFolderPath -Config $Config -RootNode 'Application'
             if ($applicationFolder -and (New-CMFolderPath -FolderPath $applicationFolder)) {
                 try {
-                    Move-CMObject -FolderPath $applicationFolder -InputObject $application -ErrorAction Stop
+                    $null = Move-CMObject -FolderPath $applicationFolder -InputObject $application -ErrorAction Stop
                     Write-Ok "Moved to console folder [$applicationFolder]"
                 }
                 catch { Write-Warn ("Could not move the application to [{0}]: {1}" -f $applicationFolder, $_.Exception.Message) }
@@ -1240,14 +1240,14 @@ function Publish-CMApplication {
         if ($Config.distributeContent) {
             try {
                 if ($existingDt) {
-                    Update-CMDistributionPoint -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction Stop
+                    $null = Update-CMDistributionPoint -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction Stop
                     Write-Ok 'Content update triggered on the distribution points.'
                 }
                 else {
                     $distributionParams = @{ ApplicationName = $appFullName; ErrorAction = 'Stop' }
                     if ($Config.distributionPointGroupName) { $distributionParams['DistributionPointGroupName'] = $Config.distributionPointGroupName }
                     elseif ($Config.distributionPointName)  { $distributionParams['DistributionPointName']      = $Config.distributionPointName }
-                    Start-CMContentDistribution @distributionParams
+                    $null = Start-CMContentDistribution @distributionParams
                     Write-Ok 'Content distribution started.'
                 }
             }
@@ -1270,7 +1270,7 @@ function Publish-CMApplication {
 
                     $collectionFolder = Resolve-CMFolderPath -FolderPath $Config.collectionFolderPath -Config $Config -RootNode 'DeviceCollection'
                     if ($collectionFolder -and (New-CMFolderPath -FolderPath $collectionFolder)) {
-                        try { Move-CMObject -FolderPath $collectionFolder -InputObject $collection -ErrorAction Stop }
+                        try { $null = Move-CMObject -FolderPath $collectionFolder -InputObject $collection -ErrorAction Stop }
                         catch { Write-Warn ("Could not move the collection: {0}" -f $_.Exception.Message) }
                     }
                 }
@@ -1364,9 +1364,14 @@ function Add-CMApplicationSupersedenceForOlderVersions {
         $oldDt = Get-CMDeploymentType -ApplicationName $candidate.LocalizedDisplayName | Select-Object -First 1
         if (-not $oldDt) { continue }
 
+        # Set-CMApplicationSupersedence, not Add-CMDeploymentTypeSupersedence:
+        # the latter is deprecated and warns on every publish. Same relation -
+        # the superseding deployment type replaces the old one.
         try {
-            Add-CMDeploymentTypeSupersedence -SupersedingDeploymentType $newDt `
-                -SupersededDeploymentType $oldDt `
+            $null = Set-CMApplicationSupersedence -Name $AppFullName `
+                -CurrentDeploymentTypeName $newDt.LocalizedDisplayName `
+                -SupersededApplicationName $candidate.LocalizedDisplayName `
+                -OldDeploymentTypeName $oldDt.LocalizedDisplayName `
                 -IsUninstall ([bool]$Config.supersedenceUninstall) `
                 -ErrorAction Stop
             Write-Ok "Supersedes: $($candidate.LocalizedDisplayName)"
@@ -1463,7 +1468,7 @@ function Update-AppCollections {
         foreach ($pattern in $config.collectionUpdatePatterns) {
             Write-Step "Updating collections matching [$pattern]"
             foreach ($collection in (Get-CMDeviceCollection -Name $pattern)) {
-                Invoke-CMCollectionUpdate -CollectionId $collection.CollectionID
+                $null = Invoke-CMCollectionUpdate -CollectionId $collection.CollectionID
                 Write-Ok "Updated: $($collection.Name)"
             }
         }
@@ -1559,16 +1564,16 @@ WHERE arp.DisplayName0 IS NOT NULL
         }
         else {
             Get-CMDeviceCollectionDirectMembershipRule -CollectionName $collectionName | ForEach-Object {
-                Remove-CMDeviceCollectionDirectMembershipRule -CollectionName $collectionName -ResourceId $_.ResourceID -Force
+                $null = Remove-CMDeviceCollectionDirectMembershipRule -CollectionName $collectionName -ResourceId $_.ResourceID -Force
             }
             Write-Info "Collection emptied: $collectionName"
         }
 
         foreach ($device in $results) {
-            Add-CMDeviceCollectionDirectMembershipRule -CollectionName $collectionName -ResourceId $device.ResourceID
+            $null = Add-CMDeviceCollectionDirectMembershipRule -CollectionName $collectionName -ResourceId $device.ResourceID
         }
 
-        Invoke-CMCollectionUpdate -Name $collectionName
+        $null = Invoke-CMCollectionUpdate -Name $collectionName
         Write-Ok "$($results.Count) clients written to [$collectionName]"
     }
 }
@@ -1616,7 +1621,7 @@ function Edit-RoleCollectionMembership {
 
             foreach ($target in $targets) {
                 Write-Info "Adding $roleName -> $($target.Name)"
-                Add-CMDeviceCollectionIncludeMembershipRule -CollectionName $target.Name -IncludeCollectionName $roleName
+                $null = Add-CMDeviceCollectionIncludeMembershipRule -CollectionName $target.Name -IncludeCollectionName $roleName
             }
         }
         else {
@@ -1627,7 +1632,7 @@ function Edit-RoleCollectionMembership {
 
             foreach ($target in $targets) {
                 Write-Info "Removing $roleName <- $($target.Name)"
-                Remove-CMDeviceCollectionIncludeMembershipRule -CollectionName $target.Name -IncludeCollectionName $roleName -Force
+                $null = Remove-CMDeviceCollectionIncludeMembershipRule -CollectionName $target.Name -IncludeCollectionName $roleName -Force
             }
         }
 
