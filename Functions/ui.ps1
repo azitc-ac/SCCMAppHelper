@@ -213,7 +213,7 @@ function Show-StartDialog {
 
     $btnSettings.Add_Click({
         try { $null = Edit-SettingsDialog -Owner $dlg -ConfigPath (Join-Path $rootDir 'Config\config.json') }
-        catch { [System.Windows.MessageBox]::Show(("Error while opening the settings: {0}" -f $_.Exception.Message), 'Settings', 'OK', 'Error') | Out-Null }
+        catch { $null = Show-MessageDialog -Text ("Error while opening the settings: {0}" -f $_.Exception.Message) -Caption 'Settings' -Buttons 'OK' -Icon 'Error' }
     })
 
     $dlg.Content = $root
@@ -306,9 +306,9 @@ function Open-EditDialog {
 
     $window = New-Object Windows.Window
     $window.Title = $title
-    $window.Width = 900
-    $window.Height = 800
+    $window.Width = 760
     $window.SizeToContent = 'Height'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($window, 'EditDialog')
     $window.WindowStartupLocation = 'CenterScreen'
 
     $scrollViewer = New-Object Windows.Controls.ScrollViewer
@@ -321,32 +321,58 @@ function Open-EditDialog {
     $stackPanel.Orientation = 'Vertical'
     $stackPanel.HorizontalAlignment = 'Stretch'
 
+    # Label and value share a row. Stacking them cost two rows per field, which
+    # pushed a nine column record past the bottom of the screen without making
+    # the pairs any easier to read.
+    $fieldGrid = New-Object Windows.Controls.Grid
+    $labelColumn = New-Object Windows.Controls.ColumnDefinition
+    $labelColumn.Width = New-Object Windows.GridLength -ArgumentList 150
+    $valueColumn = New-Object Windows.Controls.ColumnDefinition
+    $valueColumn.Width = New-Object Windows.GridLength -ArgumentList 1, ([Windows.GridUnitType]::Star)
+    $null = $fieldGrid.ColumnDefinitions.Add($labelColumn)
+    $null = $fieldGrid.ColumnDefinitions.Add($valueColumn)
+
     $textBoxes = @{}
     $keys = if ($PropertyOrder) { $PropertyOrder } else { $item.Keys }
+    $rowIndex = 0
 
     foreach ($key in $keys) {
-        $label = New-Object Windows.Controls.Label
-        $label.Content = $key
-        $label.Margin = '0,0,0,2'
-        $label.HorizontalAlignment = 'Left'
-        $null = $stackPanel.Children.Add($label)
+        $rowDefinition = New-Object Windows.Controls.RowDefinition
+        $rowDefinition.Height = [Windows.GridLength]::Auto
+        $null = $fieldGrid.RowDefinitions.Add($rowDefinition)
 
         $value = $item[$key]
         $isMultiline = (($value -is [string]) -and ($value -match "`n")) -or ($key -match 'Cmd$')
 
+        $label = New-Object Windows.Controls.Label
+        $label.Content = $key
+        $label.Margin = '0,0,8,6'
+        $label.HorizontalAlignment = 'Left'
+        $label.VerticalAlignment = $(if ($isMultiline) { 'Top' } else { 'Center' })
+        [Windows.Controls.Grid]::SetRow($label, $rowIndex)
+        [Windows.Controls.Grid]::SetColumn($label, 0)
+        $null = $fieldGrid.Children.Add($label)
+
         $textBox = New-Object Windows.Controls.TextBox
         $textBox.Text = $value
-        $textBox.Margin = '0,0,0,8'
+        $textBox.Margin = '0,0,0,6'
         $textBox.AcceptsReturn = $isMultiline
         $textBox.TextWrapping = 'Wrap'
         $textBox.HorizontalAlignment = 'Stretch'
-        $textBox.MinWidth = 800
+        $textBox.VerticalContentAlignment = 'Center'
         if ($isMultiline) { $textBox.Height = 100; $textBox.VerticalScrollBarVisibility = 'Auto' }
-        else { $textBox.Height = 30 }
+        else { $textBox.Height = 26 }
+        [Windows.Automation.AutomationProperties]::SetAutomationId($textBox, $key)
+        [Windows.Automation.AutomationProperties]::SetName($textBox, $key)
+        [Windows.Controls.Grid]::SetRow($textBox, $rowIndex)
+        [Windows.Controls.Grid]::SetColumn($textBox, 1)
+        $null = $fieldGrid.Children.Add($textBox)
 
-        $null = $stackPanel.Children.Add($textBox)
         $textBoxes[$key] = $textBox
+        $rowIndex++
     }
+
+    $null = $stackPanel.Children.Add($fieldGrid)
 
     # Prefill from a setup file - this replaces add-NewMSIToAppsCSV.ps1 and is
     # what keeps the naming in Apps.csv unambiguous.
@@ -354,6 +380,7 @@ function Open-EditDialog {
     $msiButton.Content = 'From MSI...'
     $msiButton.Width = 100
     $msiButton.Margin = '5'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($msiButton, 'FromMsi')
     $msiButton.Add_Click({
         try {
             $ofd = New-Object Microsoft.Win32.OpenFileDialog
@@ -370,13 +397,14 @@ function Open-EditDialog {
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('UninstallCmd') -Value ("Start-ADTMsiProcess -Action 'Uninstall' -ProductCode '{0}'" -f $props['ProductCode'])
             }
         }
-        catch { [System.Windows.MessageBox]::Show(("MSI could not be read: {0}" -f $_.Exception.Message), 'MSI', 'OK', 'Error') | Out-Null }
+        catch { $null = Show-MessageDialog -Text ("MSI could not be read: {0}" -f $_.Exception.Message) -Caption 'MSI' -Buttons 'OK' -Icon 'Error' }
     })
 
     $exeButton = New-Object Windows.Controls.Button
     $exeButton.Content = 'From EXE...'
     $exeButton.Width = 100
     $exeButton.Margin = '5'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($exeButton, 'FromExe')
     $exeButton.Add_Click({
         try {
             $ofd = New-Object Microsoft.Win32.OpenFileDialog
@@ -391,19 +419,21 @@ function Open-EditDialog {
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('InstallCmd') -Value ("Start-ADTProcess -FilePath '{0}' -ArgumentList '/S' -WindowStyle 'Hidden'" -f (Split-Path -Leaf $ofd.FileName))
             }
         }
-        catch { [System.Windows.MessageBox]::Show(("EXE could not be read: {0}" -f $_.Exception.Message), 'EXE', 'OK', 'Error') | Out-Null }
+        catch { $null = Show-MessageDialog -Text ("EXE could not be read: {0}" -f $_.Exception.Message) -Caption 'EXE' -Buttons 'OK' -Icon 'Error' }
     })
 
     $okButton = New-Object Windows.Controls.Button
     $okButton.Content = 'OK'
     $okButton.Width = 100
     $okButton.Margin = '5'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($okButton, 'OK')
     $okButton.Add_Click({ $window.DialogResult = $true })
 
     $cancelButton = New-Object Windows.Controls.Button
     $cancelButton.Content = 'Cancel'
     $cancelButton.Width = 100
     $cancelButton.Margin = '5'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($cancelButton, 'Cancel')
     $cancelButton.Add_Click({ $window.DialogResult = $false })
 
     $buttonPanel = New-Object Windows.Controls.StackPanel
@@ -425,6 +455,101 @@ function Open-EditDialog {
         foreach ($key in $keys) { $newItem[$key] = $textBoxes[$key].Text }
         return $newItem
     }
+}
+
+#endregion
+
+#region -------------------------------------------------------------- message
+
+<#
+    The tool's own message box.
+
+    [System.Windows.MessageBox] draws a Win32 dialog, and a Win32 control is
+    driven by posting it a window message - which User Interface Privilege
+    Isolation blocks across processes. Its buttons advertise the Invoke pattern
+    and then throw when it is used, so a MessageBox in the middle of a workflow
+    makes that workflow impossible to drive or test. A WPF window is executed by
+    its automation peer inside the owning process and has no such problem.
+
+    Returns 'Yes', 'No' or 'OK'.
+#>
+function Show-MessageDialog {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [string]$Caption = 'SCCMAppHelper',
+        [ValidateSet('OK', 'YesNo')][string]$Buttons = 'OK',
+        [ValidateSet('Information', 'Warning', 'Error', 'Question')][string]$Icon = 'Information',
+        [System.Windows.Window]$Owner
+    )
+
+    $window = New-Object Windows.Window
+    $window.Title = $Caption
+    $window.SizeToContent = 'WidthAndHeight'
+    $window.ResizeMode = 'NoResize'
+    $window.ShowInTaskbar = $false
+    if ($Owner) { $window.Owner = $Owner; $window.WindowStartupLocation = 'CenterOwner' }
+    else { $window.WindowStartupLocation = 'CenterScreen' }
+    [Windows.Automation.AutomationProperties]::SetAutomationId($window, 'MessageDialog')
+
+    $glyphs = @{ Information = 0xE946; Warning = 0xE7BA; Error = 0xEA39; Question = 0xE9CE }
+    $colours = @{
+        Information = [System.Windows.Media.Brushes]::DodgerBlue
+        Warning     = [System.Windows.Media.Brushes]::DarkOrange
+        Error       = [System.Windows.Media.Brushes]::Firebrick
+        Question    = [System.Windows.Media.Brushes]::DodgerBlue
+    }
+
+    $glyph = New-Object Windows.Controls.TextBlock
+    $glyph.Text = [char]$glyphs[$Icon]
+    $glyph.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe MDL2 Assets'
+    $glyph.FontSize = 30
+    $glyph.Foreground = $colours[$Icon]
+    $glyph.VerticalAlignment = 'Top'
+    $glyph.Margin = '0,0,14,0'
+
+    $message = New-Object Windows.Controls.TextBlock
+    $message.Text = $Text
+    $message.TextWrapping = 'Wrap'
+    $message.MaxWidth = 460
+    $message.VerticalAlignment = 'Center'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($message, 'MessageText')
+
+    $body = New-Object Windows.Controls.StackPanel
+    $body.Orientation = 'Horizontal'
+    $body.Margin = '20,20,20,10'
+    $null = $body.Children.Add($glyph)
+    $null = $body.Children.Add($message)
+
+    $buttonPanel = New-Object Windows.Controls.StackPanel
+    $buttonPanel.Orientation = 'Horizontal'
+    $buttonPanel.HorizontalAlignment = 'Right'
+    $buttonPanel.Margin = '20,0,20,16'
+
+    $result = 'No'
+    $captions = if ($Buttons -eq 'YesNo') { @('Yes', 'No') } else { @('OK') }
+    foreach ($caption in $captions) {
+        $button = New-Object Windows.Controls.Button
+        $button.Content = $caption
+        $button.MinWidth = 88
+        $button.Padding = '14,5'
+        $button.Margin = '8,0,0,0'
+        $button.Tag = $caption
+        [Windows.Automation.AutomationProperties]::SetAutomationId($button, $caption)
+        if ($caption -in @('Yes', 'OK')) { $button.IsDefault = $true }
+        if ($caption -eq 'No') { $button.IsCancel = $true }
+        $button.Add_Click({ param($s, $e) $script:MessageDialogResult = [string]$s.Tag; $window.Close() })
+        $null = $buttonPanel.Children.Add($button)
+    }
+
+    $layout = New-Object Windows.Controls.StackPanel
+    $layout.Orientation = 'Vertical'
+    $null = $layout.Children.Add($body)
+    $null = $layout.Children.Add($buttonPanel)
+
+    $window.Content = $layout
+    $script:MessageDialogResult = $(if ($Buttons -eq 'YesNo') { 'No' } else { 'OK' })
+    $null = $window.ShowDialog()
+    return $script:MessageDialogResult
 }
 
 #endregion
@@ -518,7 +643,7 @@ function Open-SelectDialogWithEdit {
 
     $data = @(Load-Data)
     if ($data.Count -eq 0) {
-        [System.Windows.MessageBox]::Show("The app list is empty:`n$CsvPath", 'SCCMAppHelper', 'OK', 'Information') | Out-Null
+        $null = Show-MessageDialog -Text "The app list is empty:`n$CsvPath" -Caption 'SCCMAppHelper' -Buttons 'OK' -Icon 'Information'
         return @()
     }
 
@@ -577,6 +702,15 @@ function Open-SelectDialogWithEdit {
     $newButton       = New-Object Windows.Controls.Button; $newButton.Content       = 'New';       $newButton.Width = 100;       $newButton.Margin = '5'
     $duplicateButton = New-Object Windows.Controls.Button; $duplicateButton.Content = 'Duplicate'; $duplicateButton.Width = 100; $duplicateButton.Margin = '5'
     $deleteButton    = New-Object Windows.Controls.Button; $deleteButton.Content    = 'Delete';    $deleteButton.Width = 100;    $deleteButton.Margin = '5'
+
+    [Windows.Automation.AutomationProperties]::SetAutomationId($window, 'AppListDialog')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($dataGrid, 'AppListGrid')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($okButton, 'OK')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($cancelButton, 'Cancel')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($editButton, 'Edit')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($newButton, 'New')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($duplicateButton, 'Duplicate')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($deleteButton, 'Delete')
 
     $okButton.Add_Click({
         $selection = @()
@@ -644,10 +778,10 @@ function Open-SelectDialogWithEdit {
     $deleteButton.Add_Click({
         $selectedItems = @($dataGrid.SelectedItems | Where-Object { $_ -isnot [int] })
         if ($selectedItems.Count -eq 0) {
-            [System.Windows.MessageBox]::Show('No entries selected.', 'Hint', 'OK', 'Information') | Out-Null
+            $null = Show-MessageDialog -Text 'No entries selected.' -Caption 'Hint' -Buttons 'OK' -Icon 'Information'
             return
         }
-        $confirm = [System.Windows.MessageBox]::Show('Really delete the selected entries?', 'Confirm delete', 'YesNo', 'Warning')
+        $confirm = Show-MessageDialog -Text 'Really delete the selected entries?' -Caption 'Confirm delete' -Buttons 'YesNo' -Icon 'Warning'
         if ($confirm -ne 'Yes') { return }
 
         $keys = $selectedItems | ForEach-Object { '{0}|{1}' -f $_.Name, $_.Version }
@@ -821,10 +955,10 @@ function Edit-SettingsDialog {
             foreach ($property in $complex.PSObject.Properties) { $result[$property.Name] = $property.Value }
 
             $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
-            [System.Windows.MessageBox]::Show("Saved: $ConfigPath", 'Settings', 'OK', 'Information') | Out-Null
+            $null = Show-MessageDialog -Text "Saved: $ConfigPath" -Caption 'Settings' -Buttons 'OK' -Icon 'Information'
         }
         catch {
-            [System.Windows.MessageBox]::Show(("Save failed: {0}" -f $_.Exception.Message), 'Settings', 'OK', 'Error') | Out-Null
+            $null = Show-MessageDialog -Text ("Save failed: {0}" -f $_.Exception.Message) -Caption 'Settings' -Buttons 'OK' -Icon 'Error'
         }
     })
 
@@ -936,12 +1070,12 @@ function Show-CatalogDialog {
         try {
             $found = Find-CatalogPackage -Query $query
             if (@($found).Count -eq 0) {
-                [System.Windows.MessageBox]::Show("Nothing found for [$query].", 'New from catalog', 'OK', 'Information') | Out-Null
+                $null = Show-MessageDialog -Text "Nothing found for [$query]." -Caption 'New from catalog' -Buttons 'OK' -Icon 'Information'
             }
             $dataGrid.ItemsSource = @($found)
         }
         catch {
-            [System.Windows.MessageBox]::Show($_.Exception.Message, 'New from catalog', 'OK', 'Warning') | Out-Null
+            $null = Show-MessageDialog -Text $_.Exception.Message -Caption 'New from catalog' -Buttons 'OK' -Icon 'Warning'
         }
         finally { $window.Cursor = 'Arrow' }
     })

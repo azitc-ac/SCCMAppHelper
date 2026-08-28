@@ -224,6 +224,30 @@ Driven from a second process through `System.Windows.Automation`:
 Match windows on their `AutomationId`, not their title: WPF derives a window's automation name
 from its content, and a window whose content is a single control reports that control's name.
 
+### The dialogs have a test now (2026-08-29)
+
+`Tests\Test-Dialogs.ps1` starts the tool and drives it from a second process. 40 assertions,
+all passing: the start dialog and its five tiles, **Publish packages** through the selection
+dialog with its status column, **Create packages** through the app list, the record editor
+with all nine columns, and the message dialog. Every path ends on Cancel, so the test creates
+nothing.
+
+Two things had to change before that was possible, and both are improvements in their own
+right rather than test scaffolding:
+
+* The tiles were `Border`s with one mouse handler on the container. They are `Button`s with a
+  `ControlTemplate` now - same card look, plus Tab focus, Space to press and a name for a
+  screen reader, none of which a `Border` can do.
+* `[System.Windows.MessageBox]` had to go. A Win32 control is invoked by posting it a window
+  message, and User Interface Privilege Isolation blocks that across processes: the button
+  advertises the Invoke pattern, reports `IsEnabled = True`, and then throws
+  "Operation is not valid due to the current state of the object". `SendKeys` is refused as
+  well. All 17 call sites now use `Show-MessageDialog`, a WPF window whose automation peer runs
+  inside the owning process.
+
+The record editor was rebuilt at the same time: label and value share a row instead of
+stacking, which is what made a nine column record run past the bottom of the screen.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
