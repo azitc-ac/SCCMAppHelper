@@ -1,21 +1,4 @@
-{
-    "activeSite":  "",
-    "sites":  [
-                  {
-                      "name":  "Customer (P01)",
-                      "siteCode":  "P01",
-                      "siteServer":  "CMSERVER",
-                      "sqlServer":  "CMSERVER",
-                      "database":  "",
-                      "sourceRoot":  "\\\\CMSERVER\\Sources\\Applications",
-                      "sourceRootLocal":  "E:\\Sources\\Applications",
-                      "distributionPointName":  "CMSERVER.customer.example",
-                      "distributionPointGroupName":  "",
-                      "limitingCollectionName":  "All Systems",
-                      "applicationFolderPath":  "",
-                      "collectionFolderPath":  ""
-                  }
-              ],
+﻿{
     "packageLayout":  "Subfolder",
     "psadtLogPath":  "C:\\Windows\\CCM\\Logs\\PSADT",
     "packageAuthor":  "",
@@ -25,8 +8,8 @@
     "estimatedRuntimeMins":  15,
     "supersedeOlderVersions":  true,
     "supersedenceUninstall":  true,
-    "distributeContent":  true,
-    "createDeployments":  true,
+    "distributeContent":  false,
+    "createDeployments":  false,
     "openExplorerOnCreate":  true,
     "openEditorOnCreate":  true,
     "editor":  "powershell_ise",
@@ -57,5 +40,36 @@
                                      "ins-req-dev-*",
                                      "flt-dev-*",
                                      "rol-dev-*"
-                                 ]
+                                 ],
+    "sites":  [
+                  {
+                      "name":  "Customer (P01)",
+                      "siteCode":  "P01",
+                      "siteServer":  "CMSERVER",
+                      "sqlServer":  "CMSERVER",
+                      "database":  "",
+                      "sourceRoot":  "\\\\CMSERVER\\Sources\\Applications",
+                      "sourceRootLocal":  "E:\\Sources\\Applications",
+                      "distributionPointName":  "CMSERVER.customer.example",
+                      "distributionPointGroupName":  "",
+                      "limitingCollectionName":  "All Systems",
+                      "applicationFolderPath":  "",
+                      "collectionFolderPath":  ""
+                  },
+                  {
+                      "name":  "L01 (LAB01.lab.example)",
+                      "siteCode":  "L01",
+                      "siteServer":  "LAB01.lab.example",
+                      "sqlServer":  "LAB01.lab.example",
+                      "database":  "CM_AZI",
+                      "sourceRoot":  "\\\\LAB01.lab.example\\Sources\\Applications",
+                      "sourceRootLocal":  "C:\\Sources\\Applications",
+                      "distributionPointName":  "LAB01.lab.example",
+                      "distributionPointGroupName":  "",
+                      "limitingCollectionName":  "All Systems",
+                      "applicationFolderPath":  "",
+                      "collectionFolderPath":  "Deployment\\Software"
+                  }
+              ],
+    "activeSite":  "L01 (LAB01.lab.example)"
 }
