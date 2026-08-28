@@ -142,6 +142,32 @@ which is a supported target.
   the signer and leaving the decision to the person at the dialog is the right call, and the
   warning does fire.
 
+### The whole chain, end to end (AZI, 2026-08-28)
+
+`7-Zip - 26.02.00.0` was carried from the catalog download all the way into the site: row into
+`Apps.csv`, package created, MSI copied into `Content\Files`, published twice. This is the
+first real application the tool created - everything before it was a `SCCMAppHelper Testapp`.
+`distributeContent` and `createDeployments` were off, so nothing reached a client.
+
+* **the native MSI clause**, which had never been published before: one rule,
+  `SettingSourceType = MSI`, `PropertyPath = ProductVersion`, `Method = Value`,
+  `GreaterEquals`, constant `26.02.00.0` as `Version`. No registry lookup reproducing what the
+  ProductCode already says.
+* the deployment type comment reads `SCCMAppHelper 1.0`, so `Get-AppPackage` reports the new
+  application as `Published (this tool)` while `7-Zip - 24.9.0.0` and `- 26.00.00.0` stay
+  `Published (foreign)` - the status column doing its job on real data rather than on test
+  objects
+* **supersedence stayed at exactly two rules after two publishes**, one for each older version,
+  both `Changeable="true"` from `supersedenceUninstall`. That is the case the earlier
+  `Add-CMDeploymentTypeSupersedence` got wrong.
+* the detection was left alone on the second pass (`Detection unchanged`), so the clause
+  stacking cannot happen here either
+* zero-config PSADT held: `AppVendor`, `AppName` and `AppVersion` are empty in
+  `Invoke-AppDeployToolkit.ps1`, only the author is stamped, and the single MSI sits in
+  `Content\Files`
+* the logo fallback picked `Logos\7-Zip.png` for the app named `7-Zip`
+* the package folder contains `Content` and nothing else
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -193,12 +219,10 @@ it is the tool's own function in `Functions\setup.ps1`.
 * `catalog.json` holds 20 package ids and only `7zip.7zip` and `Notepad++.Notepad++` were
   confirmed against the repository. A wrong id fails with "Not found in the manifest
   repository" and is a one line fix, but they are not verified.
-* Only `DetectionMethod = Registry` was published against the site. `MSI` and `File` build
-  their clauses through the same code path and the same `New-CMDetectionClause*` cmdlets, but
-  neither has been published once, and `Script` was not run since the rewrite. `New from
-  catalog` produces `MSI` rows, so that is now the interesting gap - and the downloaded 7-Zip
-  26.02 is the obvious candidate, since the site holds `7-Zip - 26.00.00.0` and a publish
-  would exercise the MSI clause and supersedence in one go.
+* `DetectionMethod = File` has never been published, and `Script` was not run since the
+  rewrite. `Registry` and `MSI` are both verified against the site. `File` builds its clause
+  through the same code path and the same `New-CMDetectionClause*` cmdlets, so what is untested
+  there is `New-CMDetectionClauseFile` and the `Path` / `FileName` split of `DetectionPattern`.
 * Publishing a package built with the older scripts (`Published (foreign)`) was not tried,
   because each of them belongs to an application that already exists in the site. That is now
   the interesting case: such an application has a script or clause detection the tool did not
@@ -218,9 +242,13 @@ it is the tool's own function in `Functions\setup.ps1`.
   are the evidence for the runs above. Removing them is exactly the case the retire workflow
   is for. Note that `3.0.0` (14 rules) and `4.0.0` (4 rules) carry deliberately stacked
   detection from the clause experiments; `5.0.0` is the clean one.
-* `C:\Sources\Applications\_DL\7-Zip - 26.02\7z2602-x64.msi` is the evidence for the catalog
-  download. It is a genuinely newer version than the `7-Zip - 26.00.00.0` in the site, so it is
-  worth keeping rather than deleting.
+* **`7-Zip - 26.02.00.0` is real, not a test object.** The catalog run created the application,
+  its two `ins-*` collections, the package under `C:\Sources\Applications\7-Zip - 26.02.00.0`,
+  the `Apps.csv` row and the download in `_DL\7-Zip - 26.02\`. It has no content on any
+  distribution point and no deployment, and it supersedes `26.00.00.0` and `24.9.0.0`. Decide
+  whether it stays: it is a genuinely newer version than what the site holds, so finishing it
+  is a matter of switching `distributeContent` and `createDeployments` on and publishing again.
+  It should not be swept up by the lab cleanup.
 * `distributeContent` and `createDeployments` are `false` in `config.json` - that is where the
   working agreement wants them before a first publish against a new site. Switch them on
   again for a real run.

@@ -1,6 +1,7 @@
 ﻿"Publisher";"Name";"Version";"DetectionMethod";"DetectionPattern";"ProductCode";"InstallCmd";"UninstallCmd";"Notes"
 "Igor Pavlov";"7-Zip";"24.9.0.0";"Registry";"";"";"";"";""
 "Igor Pavlov";"7-Zip";"26.00.00.0";"Registry";"";"";"";"";""
+"Igor Pavlov";"7-Zip";"26.02.00.0";"MSI";"";"{23170F69-40C1-2702-2602-000001000000}";"";"";"7zip.7zip 26.02 from winget-pkgs (x64, wix)"
 "Igor Pavlov";"7-Zip 26.01 (x64 edition)";"26.01.00.0";"Registry";"";"";"";"";""
 "Igor Pavlov";"7-Zip 26.02 (x64 edition)";"26.02.00.0";"Registry";"";"";"";"";""
 "Google Inc.";"Google Chrome";"134.0.6998.166";"Registry";"";"";"";"";""
