@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-08-28
+Last updated: 2026-08-28 (first run against a real site)
 
 ## Where it stands
 
@@ -19,7 +19,9 @@ The tool was written from scratch on 2026-08-27/28 as the ConfigMgr counterpart 
 
 ## Test status
 
-This matters most: the ConfigMgr layer has never been executed by the author of the code.
+The ConfigMgr layer has now been run against a real site. Everything in the AZI section below
+was executed on the lab site on CM1 on 2026-08-28, under Windows PowerShell 5.1 with the
+ConfigMgr console module and PSAppDeployToolkit 4.0.6.
 
 ### Verified locally (Windows PowerShell 5.1, no ConfigMgr, no PSADT installed)
 
@@ -42,21 +44,78 @@ This matters most: the ConfigMgr layer has never been executed by the author of 
 
 * setup assistant: discovery and the dialog sequence
 
-### Never executed anywhere
+### Verified on the AZI lab site (CM1, 2026-08-28)
 
-Everything from `Import-Module ConfigurationManager` onwards. The cmdlet calls follow the
-documentation and the old scripts, but parameter sets differ between ConfigMgr versions, so
-this is where the remaining bugs are expected:
+Test application `SCCMAppHelper Testapp` in versions `1.0.0` and `2.0.0`, both rows added to
+`Apps.csv`. First run with `distributeContent` and `createDeployments` off as the working
+agreement prescribes, then both switched on and the run repeated. Every step was repeated at
+least once to check idempotency.
 
-`New-CMApplication`, `Add-CMScriptDeploymentType`, `Set-CMScriptDeploymentType`,
-`Start-CMContentDistribution`, `Update-CMDistributionPoint`, `New-CMDeviceCollection`,
-`New-CMApplicationDeployment`, `Get-CMApplicationDeployment`,
-`Add-CMDeploymentTypeSupersedence`, `Move-CMObject`, `New-CMFolderPath`,
-`Get-CMDistributionTarget`, `Get-CMDefaultLimitingCollection`, the SQL query behind
-`Update-OutdatedAppsCollection`, and `Edit-RoleCollectionMembership`.
+* `New-ADTTemplate` against the real PSADT 4.0.6 - package folder, log path patch and
+  metadata all as expected
+* `New-CMApplication` including `IconLocationFile` - the icon ends up in the `SDMPackageXML`
+* `Add-CMScriptDeploymentType`, and `Set-CMScriptDeploymentType` on the second run - install
+  and uninstall command line, content location, `MaxExecuteTime` 120, `ExecuteTime` 15,
+  execution context System, detection script as `ScriptType` 0 with 3387 characters
+* `New-CMDeviceCollection` with `New-CMSchedule`, plus `Move-CMObject` and `New-CMFolderPath`
+  into `collectionFolderPath` - both collections sit in `Deployment\Software`. Confirm this
+  through `SMS_ObjectContainerItem`, not through the provider path: `Get-ChildItem` on
+  `AZI:\DeviceCollection\Deployment\Software` does not list them even when they are there.
+* `Start-CMContentDistribution` and `Update-CMDistributionPoint` - content for both test
+  applications is on `\\CM1.home.local`, confirmed through `SMS_DPContentInfo`
+* `New-CMApplicationDeployment` and `Get-CMApplicationDeployment` - Required and Available
+  deployment on the two test collections, reported as already existing on the second run
+* `Set-CMApplicationSupersedence` - exactly one `DeploymentTypeRule` on 2.0.0 pointing at the
+  deployment type of 1.0.0, still exactly one after a repeat run
+* the generated `_Helper\deploy.ps1` run standalone with `-bulk`
+* `Get-AppPackage` against the real share - the two tool packages as `Ready`, the packages
+  built with the older scripts as `Not imported yet`
+* `Update-AppCollections` - `Invoke-CMCollectionUpdate` over all 25 collections matching
+  `ins-req-dev-*`, `flt-dev-*` and `rol-dev-*`
+* `Update-OutdatedAppsCollection` - the SQL query runs against `CM_AZI`. The joins and the
+  `OUTER APPLY` name match were checked separately: 14 of 16 client/application pairs resolve
+  to an installed product, including `7-Zip 26.00 (x64 edition)` against `7-Zip`. Zero
+  outdated clients is the correct answer here, not a broken query. The run created
+  `flt-dev--Veraltete Apps`.
+* the ConfigMgr cmdlets of `Edit-RoleCollectionMembership` - `Get-CMCollection` over the role
+  and application patterns, `Get-`/`Add-`/`Remove-CMDeviceCollectionIncludeMembershipRule`,
+  added against a test collection and removed again
 
-`New-ADTTemplate` has also never run here - PSADT is not installed on the development
-machine, so package creation was always tested against a faked PSADT folder.
+`Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
+it is the tool's own function in `Functions\setup.ps1`.
+
+### What the run changed in the code
+
+* `check-prereqs` used `Get-InstalledModule`, which needs PowerShellGet and only reports
+  modules installed through it. Started from a pwsh 7 terminal, Windows PowerShell inherits a
+  `PSModulePath` containing the PowerShell 7 WindowsApps folder, PowerShellGet then fails to
+  load, PSAppDeployToolkit is reported as missing and `Install-Module` hangs on the NuGet
+  provider prompt - the tool never reaches the start dialog. Now `Get-Module -ListAvailable`.
+* `Add-CMDeploymentTypeSupersedence` dumped the whole application object including the base64
+  icon into the console and the transcript, is deprecated, and is not idempotent: every
+  publish appended another identical rule. Replaced by `Set-CMApplicationSupersedence`.
+* The remaining action cmdlets now get `$null =` for the same reason.
+* The content branch decided between distributing and refreshing by asking whether the
+  deployment type already existed. A package first published with `distributeContent` off -
+  exactly what the working agreement prescribes - therefore never got its content: the
+  existing deployment type sent it into `Update-CMDistributionPoint`, which only refreshes
+  what is already assigned, and the deployments then failed with "There are no distribution
+  points or distribution point groups in this application". Now `Start-CMContentDistribution`
+  is always tried first and the refresh is the fallback.
+
+### Still open on a real site
+
+* The WPF selection dialogs were not driven end to end. The run called `New-AppPackage` and
+  `Publish-CMApplication` directly, which is the code path `createApps` and `deployApps` use
+  once a selection has been made. The start dialog itself came up correctly with the site in
+  its title bar.
+* `Edit-RoleCollectionMembership` was verified cmdlet by cmdlet, not through its dialogs.
+* `supersedenceUninstall` reaches `Set-CMApplicationSupersedence` as `-IsUninstall` without
+  error, but makes no difference to the deployment type `SDMPackageXML` - a run with `$true`
+  and one with `$false` produce identical XML. Worth checking the supersedence checkbox in the
+  console by eye.
+* Publishing a package built with the older scripts (`Not imported yet`) was not tried,
+  because each of them belongs to an application that already exists in the site.
 
 ## Open items
 
@@ -65,7 +124,12 @@ machine, so package creation was always tested against a faked PSADT folder.
   optionally the package folder. Deliberately left out because it is destructive. When
   building it, mirror `deployApps`: select from the existing applications, show exactly what
   will be deleted, confirm before removing anything.
-* **Verification pass on cm1** for the cmdlet list above.
+* **Clean up the lab.** `SCCMAppHelper Testapp - 1.0.0` and `- 2.0.0`, their four `ins-*`
+  collections, their deployments, the two `Apps.csv` rows and the two package folders under
+  `C:\Sources\Applications` are still on AZI - they are the evidence for the run above.
+  Removing them is exactly the case the retire workflow is for.
+* `distributeContent` and `createDeployments` are back to `true` in `config.json` after the
+  staged run. Set them to `false` again before the first publish against another new site.
 * Packages created before 2026-08-28 may still contain a leftover `_Helper\package.json`.
   It is ignored; it can be deleted.
 
@@ -95,7 +159,10 @@ Do not re-litigate these without a reason.
 | | Site | Server | Notes |
 | --- | --- | --- | --- |
 | Production | CCL | VMSCCM | packages under `\\VMSCCM\Sources\Applications` |
-| Lab | discovered by the assistant | cm1.home.local | test system, tool runs on the server itself |
+| Lab | AZI | cm1.home.local | test system, tool runs on the server itself, packages under `C:\Sources\Applications`, single DP `CM1.home.local`, collection folder `Deployment\Software` |
+
+`ins-avl-dev-ALLE APPS` from `globalDeployments` does not exist on AZI - the publish run skips
+it with a warning, which is the intended behaviour for a collection that is not there.
 
 ## Working agreements
 
