@@ -713,10 +713,42 @@ function New-AppPackage {
         if ($App.UninstallCmd) { Insert-Commands -FilePath $adtScript -Uninstall ($App.UninstallCmd -split "`r?`n") }
     }
 
+    $null = Write-PackageHelper -PackageRoot $packageRoot -App $App -Config $Config
+
+    Write-Ok "Package ready: $packageRoot"
+    return $packageRoot
+}
+
+<#
+    Writes the _Helper folder of a package: detection script, icon, metadata and
+    the per package deploy.ps1. Used both when creating a package and when
+    importing one that was built outside this tool.
+#>
+function Write-PackageHelper {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageRoot,
+        [Parameter(Mandatory = $true)]$App,
+        $Config = (Get-ActiveConfig)
+    )
+
+    $appFullName = Get-AppFullName -Name $App.Name -Version $App.Version
+    $helperPath  = Get-PackageHelperPath -PackageRoot $PackageRoot
+    $contentPath = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
+
     if (-not (Test-Path -LiteralPath $helperPath)) { $null = New-Item -ItemType Directory -Path $helperPath -Force }
 
     $null = New-DetectionScript -App $App -Destination (Join-Path $helperPath 'detection.ps1') -Config $Config
-    $null = Resolve-AppLogo -AppName $App.Name -Destination (Join-Path $helperPath 'logo.png')
+
+    # A logo shipped with the package wins - that is where packages built with
+    # the older scripts keep their icon.
+    $shippedLogo = Join-Path $contentPath 'SupportFiles\logo.png'
+    if (Test-Path -LiteralPath $shippedLogo) {
+        Write-Info 'Using the logo from SupportFiles.'
+        $null = Resize-IconFile -Path $shippedLogo -Destination (Join-Path $helperPath 'logo.png')
+    }
+    else {
+        $null = Resolve-AppLogo -AppName $App.Name -Destination (Join-Path $helperPath 'logo.png')
+    }
 
     # Package metadata - the single source of truth for Publish-CMApplication.
     $metadata = [ordered]@{
@@ -737,8 +769,160 @@ function New-AppPackage {
     $deployTemplate = $deployTemplate.Replace('#ROOT#', $rootDir).Replace('#APP#', $appFullName).Replace('#TOOLVER#', $toolVersion)
     Set-Content -LiteralPath (Join-Path $helperPath 'deploy.ps1') -Value $deployTemplate -Encoding UTF8
 
-    Write-Ok "Package ready: $packageRoot"
-    return $packageRoot
+    return [pscustomobject]$metadata
+}
+
+<#
+    Splits "<Name> - <Version>" at the last separator, so names containing " - "
+    themselves survive.
+#>
+function Split-AppFolderName {
+    param([Parameter(Mandatory = $true)][string]$FolderName)
+
+    $separator = ' - '
+    $index = $FolderName.LastIndexOf($separator)
+    if ($index -lt 0) { return [pscustomobject]@{ Name = $FolderName; Version = '' } }
+
+    return [pscustomobject]@{
+        Name    = $FolderName.Substring(0, $index).Trim()
+        Version = $FolderName.Substring($index + $separator.Length).Trim()
+    }
+}
+
+<#
+    Reads AppVendor / AppName / AppVersion out of an existing
+    Invoke-AppDeployToolkit.ps1.
+#>
+function Read-ADTMetadata {
+    param([Parameter(Mandatory = $true)][string]$ContentRoot)
+
+    $result = [pscustomobject]@{ Publisher = ''; Name = ''; Version = '' }
+
+    $scriptPath = Join-Path $ContentRoot 'Invoke-AppDeployToolkit.ps1'
+    if (-not (Test-Path -LiteralPath $scriptPath)) { return $result }
+
+    $content = Get-Content -LiteralPath $scriptPath -Raw
+    if ($content -match "AppVendor\s*=\s*'([^']*)'")  { $result.Publisher = $Matches[1] }
+    if ($content -match "AppName\s*=\s*'([^']*)'")    { $result.Name      = $Matches[1] }
+    if ($content -match "AppVersion\s*=\s*'([^']*)'") { $result.Version   = $Matches[1] }
+
+    return $result
+}
+
+function Get-AppListRow {
+    param(
+        [string]$Name,
+        [string]$Version,
+        [string]$CsvPath = (Join-Path $rootDir 'Apps.csv')
+    )
+
+    if (-not (Test-Path -LiteralPath $CsvPath)) { return $null }
+
+    return (Import-Csv -LiteralPath $CsvPath -Delimiter ';' | Where-Object {
+        $_.Name.Trim() -eq $Name.Trim() -and $_.Version.Trim() -eq $Version.Trim()
+    } | Select-Object -First 1)
+}
+
+function Add-AppListRow {
+    param(
+        [Parameter(Mandatory = $true)]$App,
+        [string]$CsvPath = (Join-Path $rootDir 'Apps.csv')
+    )
+
+    Update-AppListSchema -CsvPath $CsvPath
+    $rows = @(Import-Csv -LiteralPath $CsvPath -Delimiter ';')
+
+    $new = New-Object psobject
+    foreach ($column in $script:AppListColumns) {
+        $value = ''
+        if ($App.PSObject.Properties.Name -contains $column) { $value = $App.$column }
+        $new | Add-Member -MemberType NoteProperty -Name $column -Value $value
+    }
+
+    ($rows + $new) |
+        Sort-Object Name, Version |
+        Select-Object -Property $script:AppListColumns |
+        Export-Csv -LiteralPath $CsvPath -Delimiter ';' -NoTypeInformation -Encoding UTF8
+
+    Write-Ok ("Added to the app list: {0} - {1}" -f $App.Name, $App.Version)
+}
+
+<#
+    Takes over a package that was not built by this tool - typically a PSADT
+    folder created by the older create-AppsInCM workflow - by writing the
+    missing _Helper folder. Name and version come from the folder name, the
+    remaining details from Apps.csv or from the PSADT script.
+#>
+function Import-AppPackage {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageRoot,
+        [switch]$Bulk,
+        $Config = (Get-ActiveConfig)
+    )
+
+    $folderName = Split-Path -Leaf $PackageRoot
+    $parsed     = Split-AppFolderName -FolderName $folderName
+    $content    = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
+
+    Write-Step "Importing existing package: $folderName"
+
+    if (-not (Test-Path -LiteralPath (Join-Path $content 'Invoke-AppDeployToolkit.ps1'))) {
+        throw "No PSADT script found in [$content] - this does not look like a package."
+    }
+
+    $adt = Read-ADTMetadata -ContentRoot $content
+    $row = Get-AppListRow -Name $parsed.Name -Version $parsed.Version
+
+    $app = [pscustomobject]@{
+        Publisher        = ''
+        Name             = $parsed.Name
+        Version          = $parsed.Version
+        DetectionMethod  = 'Registry'
+        DetectionPattern = ''
+        ProductCode      = ''
+        InstallCmd       = ''
+        UninstallCmd     = ''
+        Notes            = ''
+    }
+
+    if ($row) {
+        Write-Info 'Found in the app list - using its values.'
+        foreach ($column in $script:AppListColumns) {
+            if ($row.PSObject.Properties.Name -contains $column) { $app.$column = $row.$column }
+        }
+    }
+    else {
+        if ($adt.Publisher) { $app.Publisher = $adt.Publisher }
+        Write-Info 'Not in the app list yet.'
+    }
+
+    # Ask only when something essential is missing and we are not in a bulk run.
+    if ((-not $app.Publisher -or -not $app.Version) -and -not $Bulk) {
+        $answer = Open-EditDialog -title "Import package: $folderName" -PropertyOrder $script:AppListColumns -item ([ordered]@{
+            Publisher        = $app.Publisher
+            Name             = $app.Name
+            Version          = $app.Version
+            DetectionMethod  = $app.DetectionMethod
+            DetectionPattern = $app.DetectionPattern
+            ProductCode      = $app.ProductCode
+            InstallCmd       = $app.InstallCmd
+            UninstallCmd     = $app.UninstallCmd
+            Notes            = $app.Notes
+        })
+        $answer = $answer | Where-Object { $_ -isnot [int] }
+        if (-not $answer) { throw 'Import cancelled.' }
+        foreach ($key in $answer.Keys) { $app.$key = $answer[$key] }
+    }
+
+    if (-not $app.Version) { throw "No version could be determined for [$folderName] - expected a folder named '<Name> - <Version>'." }
+
+    $metadata = Write-PackageHelper -PackageRoot $PackageRoot -App $app -Config $Config
+
+    # Keep the master list complete - that is what the naming convention lives on.
+    if (-not $row) { Add-AppListRow -App $app }
+
+    Write-Ok "Imported: $($metadata.appFullName)"
+    return $metadata
 }
 
 function Get-AppPackage {
@@ -748,24 +932,41 @@ function Get-AppPackage {
     $results = @()
 
     foreach ($dir in (Get-ChildItem -LiteralPath $workRoot -Directory -ErrorAction SilentlyContinue)) {
-        $deployScript = Join-Path (Get-PackageHelperPath -PackageRoot $dir.FullName) 'deploy.ps1'
-        if (-not (Test-Path -LiteralPath $deployScript)) { continue }
+        $helperPath   = Get-PackageHelperPath -PackageRoot $dir.FullName
+        $deployScript = Join-Path $helperPath 'deploy.ps1'
+        $metadataPath = Join-Path $helperPath 'package.json'
+        $contentPath  = Get-PackageContentPath -PackageRoot $dir.FullName -Config $Config
+        $adtScript    = Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'
 
-        $metadataPath = Join-Path (Get-PackageHelperPath -PackageRoot $dir.FullName) 'package.json'
+        $isManaged = (Test-Path -LiteralPath $metadataPath) -and (Test-Path -LiteralPath $deployScript)
+        $isPackage = Test-Path -LiteralPath $adtScript
+
+        # Packages built outside this tool have no _Helper folder - list them
+        # anyway so they can be imported instead of staying invisible.
+        if (-not $isManaged -and -not $isPackage) { continue }
+
         $metadata = $null
-        if (Test-Path -LiteralPath $metadataPath) {
+        if ($isManaged) {
             try { $metadata = Get-Content -Raw -LiteralPath $metadataPath -Encoding UTF8 | ConvertFrom-Json } catch { }
         }
 
-        $name = $dir.Name
-        $version = ''
-        if ($metadata) { $name = $metadata.name; $version = $metadata.version }
-        elseif ($dir.Name -match '^(?<n>.+) - (?<v>[^-]+)$') { $name = $Matches['n']; $version = $Matches['v'] }
+        if ($metadata) {
+            $name    = $metadata.name
+            $version = $metadata.version
+        }
+        else {
+            $parsed  = Split-AppFolderName -FolderName $dir.Name
+            $name    = $parsed.Name
+            $version = $parsed.Version
+        }
+
+        $reference = if ($isManaged) { $deployScript } else { $adtScript }
 
         $results += [pscustomobject]@{
             AppName      = $name
             AppVersion   = $version
-            LastModified = (Get-Item -LiteralPath $deployScript).LastWriteTime
+            Status       = if ($isManaged) { 'Ready' } else { 'Not imported yet' }
+            LastModified = (Get-Item -LiteralPath $reference).LastWriteTime
             PackageRoot  = $dir.FullName
             FullPath     = $deployScript
         }
@@ -787,7 +988,11 @@ function Publish-CMApplication {
 
     $helperPath   = Get-PackageHelperPath -PackageRoot $PackageRoot
     $metadataPath = Join-Path $helperPath 'package.json'
-    if (-not (Test-Path -LiteralPath $metadataPath)) { throw "package.json not found: $metadataPath" }
+
+    # A package built outside this tool is imported on the fly.
+    if (-not (Test-Path -LiteralPath $metadataPath)) {
+        $null = Import-AppPackage -PackageRoot $PackageRoot -Bulk:$Bulk -Config $Config
+    }
 
     $metadata     = Get-Content -Raw -LiteralPath $metadataPath -Encoding UTF8 | ConvertFrom-Json
     $appFullName  = $metadata.appFullName
@@ -1073,11 +1278,13 @@ function deployApps {
     $packages = Get-AppPackage -Config $config
 
     if (($packages | Measure-Object).Count -eq 0) {
-        [System.Windows.MessageBox]::Show('No packages found. Create a package first.', 'SCCMAppHelper', 'OK', 'Information') | Out-Null
+        [System.Windows.MessageBox]::Show(
+            "No packages found below`n`n$(Get-PackageWorkRoot -Config $config)`n`nExpected one folder per package, containing Invoke-AppDeployToolkit.ps1 either directly or in a Content subfolder.",
+            'SCCMAppHelper', 'OK', 'Information') | Out-Null
         return
     }
 
-    $selection = Open-SelectDialog -data ($packages | Select-Object AppName, AppVersion, LastModified, PackageRoot) -title 'Select packages to publish to ConfigMgr' -large
+    $selection = Open-SelectDialog -data ($packages | Select-Object AppName, AppVersion, Status, LastModified, PackageRoot) -title 'Select packages to publish to ConfigMgr' -large
     if ($null -ne $selection) { $selection = $selection | Where-Object { $_ -isnot [int] } }
     if ($null -eq $selection -or ($selection | Measure-Object).Count -eq 0) { return }
 
