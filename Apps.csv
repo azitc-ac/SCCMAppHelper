@@ -26,3 +26,5 @@
 "Microsoft Corporation";"SQL Server Management Studio 22";"22.3.3";"Registry";"";"";"";"";""
 "Microsoft Corporation";"SQL Server Management Studio 22";"22.9.2";"Registry";"";"";"";"";""
 "Broadcom Inc.";"VMware Tools";"13.1.0.0";"Registry";"";"";"";"";""
+"SCCMAppHelper";"SCCMAppHelper Testapp";"1.0.0";"Registry";"";"";"";"";"Lab test app for the first ConfigMgr run of SCCMAppHelper"
+"SCCMAppHelper";"SCCMAppHelper Testapp";"2.0.0";"Registry";"";"";"";"";"Lab test app v2 - supersedence check"
