@@ -1,4 +1,4 @@
-<#
+﻿<#
     SCCMAppHelper - core functions
     https://blog.zarenko.net
 
@@ -199,14 +199,27 @@ function check-prereqs {
 
     Write-Step 'Checking prerequisites'
 
-    $installedModules = (Get-InstalledModule -ErrorAction SilentlyContinue).Name
+    # Get-Module -ListAvailable instead of Get-InstalledModule: it finds the
+    # module however it was installed and it does not pull in PowerShellGet.
+    # Started from a pwsh 7 terminal, Windows PowerShell inherits a PSModulePath
+    # that contains the PowerShell 7 WindowsApps folder; PowerShellGet then fails
+    # to load and Install-Module hangs on the NuGet provider prompt.
     foreach ($requiredModule in @('PSAppDeployToolkit')) {
-        if ($installedModules -notcontains $requiredModule) {
-            Write-Warn "Required module [$requiredModule] not detected - installing..."
-            Install-Module $requiredModule -Force -Scope CurrentUser
+        $module = Get-Module -ListAvailable -Name $requiredModule -ErrorAction SilentlyContinue |
+                    Sort-Object Version -Descending | Select-Object -First 1
+        if ($module) {
+            Write-Ok "Required module [$requiredModule] detected (version $($module.Version))."
+            continue
         }
-        else {
-            Write-Ok "Required module [$requiredModule] detected."
+
+        Write-Warn "Required module [$requiredModule] not detected - installing..."
+        try {
+            Install-Module $requiredModule -Force -Scope CurrentUser -AllowClobber -Confirm:$false -ErrorAction Stop
+            Write-Ok "Required module [$requiredModule] installed."
+        }
+        catch {
+            Write-Fail ("Could not install [{0}]: {1}" -f $requiredModule, $_.Exception.Message)
+            Write-Warn 'Install it manually - package creation needs it, publishing to ConfigMgr does not.'
         }
     }
 
