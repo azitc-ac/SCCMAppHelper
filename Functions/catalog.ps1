@@ -595,9 +595,7 @@ function newFromCatalog {
         Write-Info ("Already in the app list: {0}" -f (($rows | ForEach-Object { $_.Version }) -join ', '))
     }
     if ($known) {
-        $answer = [System.Windows.MessageBox]::Show(
-            "$($selection.Name) $latest is already in Apps.csv.`n`nDownload it anyway?",
-            'Already known', 'YesNo', 'Question')
+        $answer = Show-MessageDialog -Text "$($selection.Name) $latest is already in Apps.csv.`n`nDownload it anyway?" -Caption 'Already known' -Buttons 'YesNo' -Icon 'Question'
         if ($answer -ne 'Yes') { Write-Info 'Cancelled.'; return }
     }
 
@@ -615,12 +613,7 @@ function newFromCatalog {
 
     $downloadRoot = Join-Path (Get-PackageWorkRoot -Config $config) ('_DL\{0} - {1}' -f $manifest.PackageName, $manifest.PackageVersion)
 
-    $answer = [System.Windows.MessageBox]::Show(
-        ("Download this installer?`n`n{0} {1}`n{2} / {3}`n`n{4}`n`nSHA256 {5}`n`nInto:`n{6}" -f
-            $manifest.PackageName, $manifest.PackageVersion,
-            $installer.Architecture, $installer.InstallerType,
-            $installer.InstallerUrl, $installer.Sha256, $downloadRoot),
-        'New from catalog', 'YesNo', 'Question')
+    $answer = Show-MessageDialog -Text ("Download this installer?`n`n{0} {1}`n{2} / {3}`n`n{4}`n`nSHA256 {5}`n`nInto:`n{6}" -f $manifest.PackageName, $manifest.PackageVersion, $installer.Architecture, $installer.InstallerType, $installer.InstallerUrl, $installer.Sha256, $downloadRoot) -Caption 'New from catalog' -Buttons 'YesNo' -Icon 'Question'
     if ($answer -ne 'Yes') { Write-Info 'Cancelled - nothing was downloaded.'; return }
 
     $file     = Save-CatalogInstaller -Url $installer.InstallerUrl -Destination $downloadRoot -Sha256 $installer.Sha256
@@ -664,10 +657,7 @@ function newFromCatalog {
 
     Write-Ok ("Ready: {0} - {1}" -f $row.Name, $row.Version)
     Write-Info "Installer: $file"
-    [System.Windows.MessageBox]::Show(
-        ("{0} - {1} is in Apps.csv.`n`nThe installer is here:`n{2}`n`nCreate packages picks it up from there - copy it into .\Files when the packaging assistant opens Explorer." -f
-            $row.Name, $row.Version, $file),
-        'New from catalog', 'OK', 'Information') | Out-Null
+    $null = Show-MessageDialog -Text ("{0} - {1} is in Apps.csv.`n`nThe installer is here:`n{2}`n`nCreate packages picks it up from there - copy it into .\Files when the packaging assistant opens Explorer." -f $row.Name, $row.Version, $file) -Caption 'New from catalog' -Buttons 'OK' -Icon 'Information'
 }
 
 #endregion
