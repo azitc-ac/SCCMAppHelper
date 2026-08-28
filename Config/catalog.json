@@ -1,0 +1,25 @@
+{
+    "comment": "Front page for 'New from catalog'. packageId is the winget-pkgs identifier - the manifest path is derived from it (Publisher.Package -> manifests/<p>/Publisher/Package). Anything not listed here is reachable through the search box.",
+    "packages": [
+        { "name": "7-Zip",                     "packageId": "7zip.7zip" },
+        { "name": "Notepad++",                 "packageId": "Notepad++.Notepad++" },
+        { "name": "VLC media player",          "packageId": "VideoLAN.VLC" },
+        { "name": "Google Chrome",             "packageId": "Google.Chrome" },
+        { "name": "Mozilla Firefox",           "packageId": "Mozilla.Firefox" },
+        { "name": "Adobe Acrobat Reader",      "packageId": "Adobe.Acrobat.Reader.64-bit" },
+        { "name": "PDF24 Creator",             "packageId": "geeksoftwareGmbH.PDF24Creator" },
+        { "name": "WinSCP",                    "packageId": "WinSCP.WinSCP" },
+        { "name": "PuTTY",                     "packageId": "PuTTY.PuTTY" },
+        { "name": "FileZilla Client",          "packageId": "TimKosse.FileZilla.Client" },
+        { "name": "Git",                       "packageId": "Git.Git" },
+        { "name": "Greenshot",                 "packageId": "Greenshot.Greenshot" },
+        { "name": "KeePass",                   "packageId": "DominikReichl.KeePass" },
+        { "name": "Visual Studio Code",        "packageId": "Microsoft.VisualStudioCode" },
+        { "name": "PowerShell",                "packageId": "Microsoft.PowerShell" },
+        { "name": "PowerToys",                 "packageId": "Microsoft.PowerToys" },
+        { "name": "SQL Server Management Studio", "packageId": "Microsoft.SQLServerManagementStudio" },
+        { "name": "Remote Desktop Manager",    "packageId": "Devolutions.RemoteDesktopManager" },
+        { "name": "TeamViewer",                "packageId": "TeamViewer.TeamViewer" },
+        { "name": "Zoom",                      "packageId": "Zoom.Zoom" }
+    ]
+}
