@@ -1413,9 +1413,7 @@ function Publish-CMApplication {
         if ($application) {
             $update = $true
             if (-not $Bulk) {
-                $answer = [System.Windows.MessageBox]::Show(
-                    "The application`n`n$appFullName`n`nalready exists. Update it (deployment type, detection, content)?`n`nNo = skip this package.",
-                    'Application already exists', 'YesNo', 'Question')
+                $answer = Show-MessageDialog -Text "The application`n`n$appFullName`n`nalready exists. Update it (deployment type, detection, content)?`n`nNo = skip this package." -Caption 'Application already exists' -Buttons 'YesNo' -Icon 'Question'
                 $update = ($answer -eq 'Yes')
             }
             if (-not $update) {
@@ -1746,9 +1744,7 @@ function deployApps {
     $packages = Get-AppPackage -Config $config
 
     if (($packages | Measure-Object).Count -eq 0) {
-        [System.Windows.MessageBox]::Show(
-            "No packages found below`n`n$(Get-PackageWorkRoot -Config $config)`n`nExpected one folder per package, containing Invoke-AppDeployToolkit.ps1 either directly or in a Content subfolder.",
-            'SCCMAppHelper', 'OK', 'Information') | Out-Null
+        $null = Show-MessageDialog -Text "No packages found below`n`n$(Get-PackageWorkRoot -Config $config)`n`nExpected one folder per package, containing Invoke-AppDeployToolkit.ps1 either directly or in a Content subfolder." -Caption 'SCCMAppHelper' -Buttons 'OK' -Icon 'Information'
         return
     }
 

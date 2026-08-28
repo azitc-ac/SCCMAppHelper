@@ -273,9 +273,7 @@ function Start-SetupWizard {
         # is an environment decision and stays with the admin.
         $localPath = $site.sourceRootLocal
         if ($localPath -and (Test-IsLocalComputer -ComputerName $server) -and -not (Test-Path -LiteralPath $localPath)) {
-            $answer = [System.Windows.MessageBox]::Show(
-                "The folder`n`n$localPath`n`ndoes not exist. Create it now?`n`nThe SMB share itself still has to be created manually - the site server computer account needs read access to it.",
-                'SCCMAppHelper', 'YesNo', 'Question')
+            $answer = Show-MessageDialog -Text "The folder`n`n$localPath`n`ndoes not exist. Create it now?`n`nThe SMB share itself still has to be created manually - the site server computer account needs read access to it." -Caption 'SCCMAppHelper' -Buttons 'YesNo' -Icon 'Question'
             if ($answer -eq 'Yes') {
                 $null = New-Item -ItemType Directory -Path $localPath -Force
                 Write-Ok "Created: $localPath"

@@ -37,9 +37,7 @@ $config = Get-ActiveConfig
 
 if (-not (Test-DnsName -Name $config.siteServer)) {
     Write-Warn "Configured site server [$($config.siteServer)] cannot be resolved from this machine."
-    $answer = [System.Windows.MessageBox]::Show(
-        "The configured site server`n`n$($config.siteServer)`n`ncannot be reached from this machine.`n`nRun the setup assistant and connect to a site on this server instead?",
-        'SCCMAppHelper', 'YesNo', 'Question')
+    $answer = Show-MessageDialog -Text "The configured site server`n`n$($config.siteServer)`n`ncannot be reached from this machine.`n`nRun the setup assistant and connect to a site on this server instead?" -Caption 'SCCMAppHelper' -Buttons 'YesNo' -Icon 'Question'
     if ($answer -eq 'Yes') {
         if (Start-SetupWizard) { $config = Get-ActiveConfig }
     }

@@ -304,6 +304,27 @@ back in this order:
 Only spaces and underscores count as a boundary, so `PDF` never picks up
 `PDF-XChange Editor.png`. Without a match, `defaultlogo.png` is used.
 
+## Tests
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\Test-Dialogs.ps1
+```
+
+Starts the tool and operates it from a second process through UI Automation:
+presses the tiles, checks the dialog behind each one, and cancels back out. Nothing is
+created, published or downloaded - every path ends on Cancel. It does need a reachable site,
+because the package list asks ConfigMgr for its status column.
+
+Two constraints shaped the dialogs and are worth keeping in mind when adding one:
+
+* **Address a window by its `AutomationId`, not its title.** WPF derives a window's automation
+  name from its content, so a window whose content is a single control reports that control's
+  name instead of the caption.
+* **Use `Show-MessageDialog`, not `[System.Windows.MessageBox]`.** A Win32 control is driven by
+  posting it a window message, and User Interface Privilege Isolation blocks that across
+  processes - its buttons advertise the Invoke pattern and then throw when it is used. A
+  MessageBox in the middle of a workflow makes that workflow impossible to test.
+
 ## Notes
 
 `STATUS.md` records what has been tested where, which items are still open and which design
