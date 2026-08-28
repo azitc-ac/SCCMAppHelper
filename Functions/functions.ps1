@@ -949,19 +949,58 @@ function New-AppDetectionClause {
         default { throw "DetectionMethod [$($App.DetectionMethod)] has no native clause." }
     }
 
-    # A single clause needs neither a connector nor a group.
-    $logicalNames = @($clauses | ForEach-Object { $_.Setting.LogicalName })
-    $connectors   = @()
-    if ($clauses.Count -gt 1) {
-        foreach ($logicalName in $logicalNames | Select-Object -Skip 1) {
-            $connectors += @{ LogicalName = $logicalName; Connector = 'Or' }
-        }
-    }
+    # The connector belongs on the clause itself. Passing it through
+    # -DetectionClauseConnector together with -GroupDetectionClauses is what the
+    # documentation suggests and it silently leaves the rule at "And", which for
+    # the two registry views would mean the key had to exist in both.
+    foreach ($clause in $clauses) { $clause.Connector = 'Or' }
 
     return [pscustomobject]@{
-        Clauses      = $clauses
-        Connectors   = $connectors
-        LogicalNames = $logicalNames
+        Clauses     = $clauses
+        Fingerprint = (Get-DetectionFingerprint -Clauses $clauses)
+    }
+}
+
+<#
+    A comparable description of a detection, built from the clause objects -
+    used to tell an unchanged deployment type from one whose detection really
+    has to be replaced.
+#>
+function Get-DetectionFingerprint {
+    param($Clauses)
+
+    $parts = @(
+        foreach ($clause in @($Clauses)) {
+            '{0}|{1}|{2}|{3}|{4}|{5}' -f $clause.SettingSourceType,
+                                         $clause.Setting.Location,
+                                         $clause.Setting.ValueName,
+                                         $clause.Setting.Is64Bit,
+                                         $clause.PropertyPath,
+                                         $clause.Constant.Value
+        }
+    )
+    return (($parts | Sort-Object) -join ' && ')
+}
+
+<#
+    What the deployment type stores today. The rule of the enhanced detection
+    method is the ground truth - Get-CMDeploymentTypeDetectionClause has been
+    seen disagreeing with it, and a mismatch between the two is itself a reason
+    to treat the detection as "not what we want".
+#>
+function Get-DeploymentTypeDetection {
+    param([Parameter(Mandatory = $true)]$DeploymentType)
+
+    $xml   = [xml]$DeploymentType.SDMPackageXML
+    $rule  = $xml.SelectSingleNode('//*[local-name()="EnhancedDetectionMethod"]/*[local-name()="Rule"]')
+    $count = if ($rule) { $rule.SelectNodes('.//*[local-name()="SettingReference"]').Count } else { 0 }
+
+    $clauses = @(Get-CMDeploymentTypeDetectionClause -InputObject $DeploymentType -ErrorAction SilentlyContinue)
+
+    return [pscustomobject]@{
+        RuleCount   = $count
+        Clauses     = $clauses
+        Fingerprint = if ($clauses.Count -eq $count) { Get-DetectionFingerprint -Clauses $clauses } else { '<inconsistent>' }
     }
 }
 <#
@@ -1425,32 +1464,44 @@ function Publish-CMApplication {
         else {
             $detection = New-AppDetectionClause -App $app
             $dtParams['AddDetectionClause'] = $detection.Clauses
-            if ($detection.Connectors.Count -gt 0) {
-                $dtParams['DetectionClauseConnector'] = $detection.Connectors
-                $dtParams['GroupDetectionClauses']    = $detection.LogicalNames
-            }
             Write-Info ("Detection: native {0} clause, {1} rule(s)." -f $app.DetectionMethod, $detection.Clauses.Count)
         }
 
         if ($existingDt) {
-            # Clauses are added, never replaced: without removing the ones that
-            # are already on the deployment type, every publish would stack
-            # another copy on top. ScriptText does not have that problem - it
-            # simply overwrites.
+            # Detection clauses are only ever added, never replaced, and a clause
+            # that was created together with the deployment type cannot be
+            # removed again at all - Set-CMScriptDeploymentType reports it as
+            # "not found" and silently leaves it in place. Re-applying the same
+            # clauses on every publish therefore stacks another copy on top and
+            # the rule ends up referencing all of them.
+            # So the detection is compared first and only touched when it really
+            # differs. ScriptText has no such problem, it simply overwrites.
             if ($dtParams.ContainsKey('AddDetectionClause')) {
-                $obsolete = @(
-                    Get-CMDeploymentTypeDetectionClause -InputObject $existingDt -ErrorAction SilentlyContinue |
-                        ForEach-Object { if ($_.Setting) { $_.Setting.LogicalName } else { $_.LogicalName } } |
-                        Where-Object { $_ }
-                )
-                if ($obsolete.Count -gt 0) {
-                    $dtParams['RemoveDetectionClause'] = $obsolete
-                    Write-Info ("Replacing {0} existing detection clause(s)." -f $obsolete.Count)
+                $stored = Get-DeploymentTypeDetection -DeploymentType $existingDt
+
+                if ($stored.Fingerprint -eq $detection.Fingerprint) {
+                    $dtParams.Remove('AddDetectionClause')
+                    Write-Info 'Detection unchanged - leaving it alone.'
+                }
+                else {
+                    $obsolete = @($stored.Clauses | ForEach-Object { $_.Setting.LogicalName } | Where-Object { $_ })
+                    if ($obsolete.Count -gt 0) { $dtParams['RemoveDetectionClause'] = $obsolete }
+                    Write-Warn ("Detection differs from the {0} rule(s) on the deployment type - replacing it." -f $stored.RuleCount)
                 }
             }
+
             Write-Info 'Updating deployment type...'
             $null = Set-CMScriptDeploymentType @dtParams
             Write-Ok 'Deployment type updated.'
+
+            # ConfigMgr accepts a removal it did not perform, so the result has
+            # to be checked rather than assumed.
+            if ($dtParams.ContainsKey('AddDetectionClause')) {
+                $after = Get-DeploymentTypeDetection -DeploymentType (Get-CMDeploymentType -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName)
+                if ($after.RuleCount -ne $detection.Clauses.Count) {
+                    Write-Fail ("Detection now has {0} rule(s) instead of {1}. ConfigMgr kept clauses it refuses to remove - correct the detection method of [{2}] in the console." -f $after.RuleCount, $detection.Clauses.Count, $deploymentTypeName)
+                }
+            }
         }
         else {
             Write-Info 'Creating deployment type...'
