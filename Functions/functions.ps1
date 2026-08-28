@@ -1237,21 +1237,39 @@ function Publish-CMApplication {
         }
 
         # ------------------------------------------------------------- content
+        # Start-CMContentDistribution assigns the content to a distribution
+        # target, Update-CMDistributionPoint only refreshes content that is
+        # already assigned. Which of the two applies does not follow from
+        # "the deployment type already existed": a package first published
+        # with distributeContent off has a deployment type but no content on
+        # any distribution point, and a refresh alone would never put it
+        # there - the deployments then fail with "There are no distribution
+        # points or distribution point groups in this application".
+        # So always try to assign first and fall back to a refresh when the
+        # content already sits on the target.
         if ($Config.distributeContent) {
+            $distributionParams = @{ ApplicationName = $appFullName; ErrorAction = 'Stop' }
+            if ($Config.distributionPointGroupName) { $distributionParams['DistributionPointGroupName'] = $Config.distributionPointGroupName }
+            elseif ($Config.distributionPointName)  { $distributionParams['DistributionPointName']      = $Config.distributionPointName }
+
             try {
-                if ($existingDt) {
+                $null = Start-CMContentDistribution @distributionParams
+                Write-Ok 'Content distribution started.'
+            }
+            catch {
+                # Already distributed to this target - ConfigMgr reports
+                # "No content destination was found. ... or if the content has
+                # already been distributed to the specified destination."
+                $distributionError = $_.Exception.Message
+                try {
                     $null = Update-CMDistributionPoint -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction Stop
-                    Write-Ok 'Content update triggered on the distribution points.'
+                    Write-Ok 'Content already distributed - update triggered on the distribution points.'
                 }
-                else {
-                    $distributionParams = @{ ApplicationName = $appFullName; ErrorAction = 'Stop' }
-                    if ($Config.distributionPointGroupName) { $distributionParams['DistributionPointGroupName'] = $Config.distributionPointGroupName }
-                    elseif ($Config.distributionPointName)  { $distributionParams['DistributionPointName']      = $Config.distributionPointName }
-                    $null = Start-CMContentDistribution @distributionParams
-                    Write-Ok 'Content distribution started.'
+                catch {
+                    Write-Warn ("Content distribution: {0}" -f $distributionError)
+                    Write-Warn ("Content update: {0}" -f $_.Exception.Message)
                 }
             }
-            catch { Write-Warn ("Content distribution: {0}" -f $_.Exception.Message) }
         }
 
         # --------------------------------------------------------- collections
