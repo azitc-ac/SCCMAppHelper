@@ -12,6 +12,7 @@
 "Microsoft Corporation";"Microsoft Office LTSC Standard 2024";"16.0.17932.20396";"Registry";"";"";"";"";""
 "Microsoft Corporation";"Microsoft Office Professional Plus 2019";"16.0.10416.20073";"Registry";"";"";"";"";""
 "Notepad++ team";"Notepad++";"8.9.2";"Registry";"";"";"";"";""
+"Notepad++ Team";"Notepad++";"8.9.8";"File";"%ProgramFiles%\Notepad++\notepad++.exe";"";"Start-ADTProcess -FilePath 'npp.8.9.8.Installer.x64.exe' -ArgumentList '/S'";"Start-ADTProcess -FilePath ""$env:ProgramFiles\Notepad++\uninstall.exe"" -ArgumentList '/S'";"Notepad++.Notepad++ 8.9.8 from winget-pkgs (x64, nullsoft); file detection on the main executable"
 "Notepad++ team (MSI installer)";"Notepad++ (x64)";"8.9.8";"Registry";"";"";"";"";""
 "Oracle Corporation";"Oracle";"19c";"Registry";"";"";"";"";""
 "BioPDF";"PDF Writer";"14.5.0.2974";"Registry";"";"";"";"";""

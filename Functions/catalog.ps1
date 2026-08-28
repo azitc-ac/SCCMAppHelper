@@ -451,10 +451,17 @@ function ConvertTo-CatalogAppRow {
     $publisher = $Manifest.Publisher
     if (-not $publisher) { $publisher = $Evidence.Manufacturer }
 
-    # The manifest version is a catalog label ("26.02"); the product version is
-    # what ends up in the uninstall key.
-    $version = $Evidence.ProductVersion
-    if (-not $version) { $version = $Manifest.PackageVersion }
+    # An MSI states the version it is going to register, so it outranks the
+    # catalog label - "26.02" in the manifest, 26.02.00.0 in the uninstall key.
+    #
+    # The version resource of an EXE installer describes the installer, not the
+    # product, and is regularly malformed: the Notepad++ 8.9.8 installer reports
+    # "8.98", which as a [version] sorts *above* 8.9.8 and would poison the
+    # application name, the detection and the supersedence in one go. There the
+    # manifest wins.
+    $version = if ($Evidence.IsMsi -and $Evidence.ProductVersion) { $Evidence.ProductVersion }
+               else { $Manifest.PackageVersion }
+    if (-not $version) { $version = $Evidence.ProductVersion }
 
     $productCode = $Evidence.ProductCode
     if (-not $productCode) { $productCode = [string]$entry['ProductCode'] }
