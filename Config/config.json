@@ -1,21 +1,4 @@
-{
-    "activeSite":  "",
-    "sites":  [
-                  {
-                      "name":  "CREM (CCL)",
-                      "siteCode":  "CCL",
-                      "siteServer":  "VMSCCM",
-                      "sqlServer":  "VMSCCM",
-                      "database":  "",
-                      "sourceRoot":  "\\\\VMSCCM\\Sources\\Applications",
-                      "sourceRootLocal":  "E:\\Sources\\Applications",
-                      "distributionPointName":  "VMSCCM.CREM-CLOUD.DE",
-                      "distributionPointGroupName":  "",
-                      "limitingCollectionName":  "All Systems",
-                      "applicationFolderPath":  "",
-                      "collectionFolderPath":  ""
-                  }
-              ],
+﻿{
     "packageLayout":  "Subfolder",
     "psadtLogPath":  "C:\\Windows\\CCM\\Logs\\PSADT",
     "packageAuthor":  "",
@@ -25,8 +8,8 @@
     "estimatedRuntimeMins":  15,
     "supersedeOlderVersions":  true,
     "supersedenceUninstall":  true,
-    "distributeContent":  true,
-    "createDeployments":  true,
+    "distributeContent":  false,
+    "createDeployments":  false,
     "openExplorerOnCreate":  true,
     "openEditorOnCreate":  true,
     "editor":  "powershell_ise",
@@ -57,5 +40,36 @@
                                      "ins-req-dev-*",
                                      "flt-dev-*",
                                      "rol-dev-*"
-                                 ]
+                                 ],
+    "sites":  [
+                  {
+                      "name":  "CREM (CCL)",
+                      "siteCode":  "CCL",
+                      "siteServer":  "VMSCCM",
+                      "sqlServer":  "VMSCCM",
+                      "database":  "",
+                      "sourceRoot":  "\\\\VMSCCM\\Sources\\Applications",
+                      "sourceRootLocal":  "E:\\Sources\\Applications",
+                      "distributionPointName":  "VMSCCM.CREM-CLOUD.DE",
+                      "distributionPointGroupName":  "",
+                      "limitingCollectionName":  "All Systems",
+                      "applicationFolderPath":  "",
+                      "collectionFolderPath":  ""
+                  },
+                  {
+                      "name":  "AZI (CM1.home.local)",
+                      "siteCode":  "AZI",
+                      "siteServer":  "CM1.home.local",
+                      "sqlServer":  "CM1.home.local",
+                      "database":  "CM_AZI",
+                      "sourceRoot":  "\\\\CM1.home.local\\Sources\\Applications",
+                      "sourceRootLocal":  "C:\\Sources\\Applications",
+                      "distributionPointName":  "CM1.home.local",
+                      "distributionPointGroupName":  "",
+                      "limitingCollectionName":  "All Systems",
+                      "applicationFolderPath":  "",
+                      "collectionFolderPath":  "Deployment\\Software"
+                  }
+              ],
+    "activeSite":  "AZI (CM1.home.local)"
 }
