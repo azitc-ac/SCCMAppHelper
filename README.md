@@ -231,4 +231,7 @@ Only spaces and underscores count as a boundary, so `PDF` never picks up
 
 ## Notes
 
+`STATUS.md` records what has been tested where, which items are still open and which design
+decisions are already settled - start there when picking the project up again.
+
 Author: alexander@zarenko.net - https://blog.zarenko.net
