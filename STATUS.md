@@ -66,7 +66,10 @@ least once to check idempotency.
 * `New-CMApplicationDeployment` and `Get-CMApplicationDeployment` - Required and Available
   deployment on the two test collections, reported as already existing on the second run
 * `Set-CMApplicationSupersedence` - exactly one `DeploymentTypeRule` on 2.0.0 pointing at the
-  deployment type of 1.0.0, still exactly one after a repeat run
+  deployment type of 1.0.0, still exactly one after a repeat run. The cmdlet replaces the rule
+  instead of updating it, so the `DTRule_<guid>` id changes on every call and every publish
+  bumps the application revision even when nothing else changed - idempotent in effect, not in
+  the stored id
 * the generated `_Helper\deploy.ps1` run standalone with `-bulk`
 * `Get-AppPackage` against the real share - the two tool packages as `Ready`, the packages
   built with the older scripts as `Not imported yet`
@@ -80,6 +83,12 @@ least once to check idempotency.
 * the ConfigMgr cmdlets of `Edit-RoleCollectionMembership` - `Get-CMCollection` over the role
   and application patterns, `Get-`/`Add-`/`Remove-CMDeviceCollectionIncludeMembershipRule`,
   added against a test collection and removed again
+* `supersedenceUninstall` does reach the rule. `-IsUninstall` is a `[bool]` parameter, not a
+  switch, and it surfaces as the `Changeable` attribute of `DeploymentTypeReference` inside
+  `<Supersedes>` - `$true` writes `Changeable="true"`, `$false` writes `Changeable="false"`.
+  Measured on 2.0.0 as three consecutive states (baseline, `$false`, `$true`). An earlier note
+  here claimed both values produce identical XML - that was a measurement error, the code in
+  `Add-CMApplicationSupersedenceForOlderVersions` is correct.
 
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
@@ -110,10 +119,6 @@ it is the tool's own function in `Functions\setup.ps1`.
   once a selection has been made. The start dialog itself came up correctly with the site in
   its title bar.
 * `Edit-RoleCollectionMembership` was verified cmdlet by cmdlet, not through its dialogs.
-* `supersedenceUninstall` reaches `Set-CMApplicationSupersedence` as `-IsUninstall` without
-  error, but makes no difference to the deployment type `SDMPackageXML` - a run with `$true`
-  and one with `$false` produce identical XML. Worth checking the supersedence checkbox in the
-  console by eye.
 * Publishing a package built with the older scripts (`Not imported yet`) was not tried,
   because each of them belongs to an application that already exists in the site.
 
