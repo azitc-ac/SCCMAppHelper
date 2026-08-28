@@ -168,6 +168,38 @@ first real application the tool created - everything before it was a `SCCMAppHel
 * the logo fallback picked `Logos\7-Zip.png` for the app named `7-Zip`
 * the package folder contains `Content` and nothing else
 
+### File detection: `Notepad++ - 8.9.8` (AZI, 2026-08-28)
+
+Taken from the catalog the same way, but deliberately with the x64 `nullsoft` installer rather
+than the MSI: no ProductCode, so detecting the installed file is the natural choice. Detection
+was set to `File` with `%ProgramFiles%\Notepad++\notepad++.exe`, the silent switch went into
+`InstallCmd`, and `distributeContent` / `createDeployments` stayed off.
+
+* `New-CMDetectionClauseFile` and the `Path` / `FileName` split of `DetectionPattern`:
+  `<Path>%ProgramFiles%\Notepad++</Path><Filter>notepad++.exe</Filter>`, compared as
+  `Version GreaterEquals 8.9.8`. The environment variable survives into the clause.
+* `Insert-Commands` put both PSADT calls into the script, and the metadata was filled in
+  rather than left empty - this is not a zero-config MSI package
+* the logo fallback picked `Logos\Notepad++.png` for an application whose name contains `++`
+* the **"Detection differs" branch**, which had never run: after the `Is64Bit` fix the
+  republish reported `Detection differs from the 1 rule(s) - replacing it` and ended at exactly
+  2 settings, 2 rule references and operator `Or`. The replacement was clean, and the
+  verification afterwards found nothing to complain about.
+
+**Two bugs this run found**, both invisible without publishing for real:
+
+* The version came out as `8.98`. `ConvertTo-CatalogAppRow` preferred the version resource of
+  the downloaded file over the manifest, which is right for an MSI - it states what it will
+  register - but wrong for an EXE installer, where the resource describes the installer and is
+  regularly malformed. As a `[version]`, `8.98` sorts *above* `8.9.8`, so this would have
+  poisoned the application name, the detection constant and the supersedence at once. The
+  manifest now wins for anything that is not an MSI.
+* The file clause was written with `Is64Bit="false"`, the 32 bit view, so the client would have
+  resolved `%ProgramFiles%` to `Program Files (x86)` and never found an x64 application. Same
+  class of mistake as the two registry views, just not carried over to files. A path containing
+  an environment variable now gets both views connected with `Or`; a literal path still gets a
+  single clause, because there is nothing left to redirect.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -187,14 +219,21 @@ it is the tool's own function in `Functions\setup.ps1`.
   `And` - which for the 64 bit and the 32 bit registry view would mean the key had to exist in
   both at once, so nothing would ever be detected. The connector belongs on the clause object:
   set `Connector` to `Or` on each clause.
-* Detection clauses stack and cannot be cleaned up. They are only ever added, and a clause
-  created together with the deployment type cannot be removed again at all -
-  `Set-CMScriptDeploymentType -RemoveDetectionClause` reports it as "not found" and leaves it
-  in place, while clauses added by a later `Set-` call do get removed. Measured on `3.0.0`:
-  every publish appended two more rules, up to 14, all of them referenced by the rule. The
-  tool now compares the detection first and only touches it when it really differs, then
-  verifies the result. Do not try to fix this with a `-ScriptText` reset - that switches the
-  detection method but leaves the clause pool untouched.
+* Detection clauses are only ever added, and removing them is unreliable. Re-applying the same
+  clauses on every publish stacks another copy on top and the rule ends up referencing all of
+  them - measured on `3.0.0`, two more rules per publish, up to 14.
+  `Set-CMScriptDeploymentType -RemoveDetectionClause` sometimes reports a clause as "not found"
+  and silently leaves it in place: in the `4.0.0` experiment neither of the two clauses created
+  together with the deployment type could be removed, while clauses added by a later `Set-` call
+  went away. On `Notepad++ - 8.9.8` the same operation worked - one clause created with the
+  deployment type was replaced cleanly by two. What separates the two cases was not pinned
+  down; a plausible reading is that the pool there already held clauses identical in
+  everything but their logical name. Treat removal as "usually works, sometimes silently does
+  not".
+  The tool therefore compares the detection first and only touches it when it really differs,
+  and verifies the rule count afterwards instead of trusting the call. Do not try to fix this
+  with a `-ScriptText` reset - that switches the detection method but leaves the clause pool
+  untouched.
 * `Get-CMDeploymentTypeDetectionClause` has been seen disagreeing with the `SDMPackageXML`
   (0 clauses reported where the XML held 8). The rule of the enhanced detection method is the
   ground truth; a mismatch between the two is treated as "not what we want".
@@ -219,10 +258,14 @@ it is the tool's own function in `Functions\setup.ps1`.
 * `catalog.json` holds 20 package ids and only `7zip.7zip` and `Notepad++.Notepad++` were
   confirmed against the repository. A wrong id fails with "Not found in the manifest
   repository" and is a one line fix, but they are not verified.
-* `DetectionMethod = File` has never been published, and `Script` was not run since the
-  rewrite. `Registry` and `MSI` are both verified against the site. `File` builds its clause
-  through the same code path and the same `New-CMDetectionClause*` cmdlets, so what is untested
-  there is `New-CMDetectionClauseFile` and the `Path` / `FileName` split of `DetectionPattern`.
+* `Registry`, `MSI` and `File` are all verified against the site. `Script` is the only
+  detection method that has not been run since the rewrite - what is untested there is the
+  `CustomSource` branch reading `Content\SupportFiles\detection.ps1` and the signature header
+  it prepends.
+* None of the published applications was ever installed on a client, so no detection has been
+  observed *evaluating*. What is verified is the clause ConfigMgr stores, not that it matches
+  the product once it is on a machine. The `Is64Bit` bug is the reminder: the clause looked
+  right and would still have found nothing.
 * Publishing a package built with the older scripts (`Published (foreign)`) was not tried,
   because each of them belongs to an application that already exists in the site. That is now
   the interesting case: such an application has a script or clause detection the tool did not
@@ -242,6 +285,9 @@ it is the tool's own function in `Functions\setup.ps1`.
   are the evidence for the runs above. Removing them is exactly the case the retire workflow
   is for. Note that `3.0.0` (14 rules) and `4.0.0` (4 rules) carry deliberately stacked
   detection from the clause experiments; `5.0.0` is the clean one.
+* **`Notepad++ - 8.9.8` is real too**, same situation as 7-Zip below: application, two `ins-*`
+  collections, package, `Apps.csv` row and the download in `_DL\Notepad++ - 8.9.8\`. No content,
+  no deployment. The site had no Notepad++ before, so nothing is superseded.
 * **`7-Zip - 26.02.00.0` is real, not a test object.** The catalog run created the application,
   its two `ins-*` collections, the package under `C:\Sources\Applications\7-Zip - 26.02.00.0`,
   the `Apps.csv` row and the download in `_DL\7-Zip - 26.02\`. It has no content on any
