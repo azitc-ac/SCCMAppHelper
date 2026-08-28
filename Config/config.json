@@ -1,4 +1,4 @@
-﻿{
+{
     "packageLayout":  "Subfolder",
     "psadtLogPath":  "C:\\Windows\\CCM\\Logs\\PSADT",
     "packageAuthor":  "",
@@ -8,8 +8,8 @@
     "estimatedRuntimeMins":  15,
     "supersedeOlderVersions":  true,
     "supersedenceUninstall":  true,
-    "distributeContent":  true,
-    "createDeployments":  true,
+    "distributeContent":  false,
+    "createDeployments":  false,
     "openExplorerOnCreate":  true,
     "openEditorOnCreate":  true,
     "editor":  "powershell_ise",
