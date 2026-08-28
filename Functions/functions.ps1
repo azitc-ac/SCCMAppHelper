@@ -444,10 +444,13 @@ function Set-ADTAppMetadata {
     $creationDate = Get-Date -Format 'yyyy-MM-dd'
     $script = Get-Content -LiteralPath $scriptPath
 
+    # Empty values are skipped, so a zero-config MSI package keeps its empty
+    # AppVendor / AppName / AppVersion while author and date are still stamped.
+    if ($Publisher) { $script = $script -replace "AppVendor = ''", "AppVendor = '$Publisher'" }
+    if ($Name)      { $script = $script -replace "AppName = ''", "AppName = '$Name'" }
+    if ($Version)   { $script = $script -replace "AppVersion = ''", "AppVersion = '$Version'" }
+
     $script = $script `
-        -replace "AppVendor = ''", "AppVendor = '$Publisher'" `
-        -replace "AppName = ''", "AppName = '$Name'" `
-        -replace "AppVersion = ''", "AppVersion = '$Version'" `
         -replace "AppScriptDate = '2000-12-31'", "AppScriptDate = '$creationDate'" `
         -replace "AppScriptAuthor = '<author name>'", "AppScriptAuthor = '$Author'"
 
@@ -703,8 +706,17 @@ function New-AppPackage {
 
     $author = $Config.packageAuthor
     if ([string]::IsNullOrWhiteSpace($author)) { $author = $env:USERNAME }
-    Set-ADTAppMetadata -ContentRoot $contentPath -Publisher $App.Publisher -Name $App.Name -Version $App.Version -Author $author
-    Write-Ok 'Invoke-AppDeployToolkit.ps1 metadata filled in.'
+
+    # A single MSI is deployed by PSADT in zero-config mode: vendor, name and
+    # version have to stay empty so PSADT takes them from the MSI itself.
+    if ($App.DetectionMethod -eq 'MSI') {
+        Set-ADTAppMetadata -ContentRoot $contentPath -Author $author
+        Write-Info 'MSI package - AppVendor/AppName/AppVersion left empty for the PSADT zero-config deployment.'
+    }
+    else {
+        Set-ADTAppMetadata -ContentRoot $contentPath -Publisher $App.Publisher -Name $App.Name -Version $App.Version -Author $author
+        Write-Ok 'Invoke-AppDeployToolkit.ps1 metadata filled in.'
+    }
 
     # Injecting the command snippets is NOT idempotent, so only do it once.
     if ($isNewTemplate) {
@@ -737,6 +749,20 @@ function Write-PackageHelper {
 
     if (-not (Test-Path -LiteralPath $helperPath)) { $null = New-Item -ItemType Directory -Path $helperPath -Force }
 
+    # For an MSI package the ProductCode does not have to be maintained by hand -
+    # it is read from the MSI that is going to be deployed.
+    if ($App.DetectionMethod -eq 'MSI' -and -not $App.ProductCode) {
+        $msi = Get-PackageMsi -ContentRoot $contentPath
+        if ($msi) {
+            $App.ProductCode = [string](Get-MsiProperties -Path $msi.FullName)['ProductCode']
+            Write-Info "ProductCode read from $($msi.Name): $($App.ProductCode)"
+        }
+        else {
+            Write-Warn 'DetectionMethod is MSI but .\Files does not hold exactly one MSI - detection falls back to the registry.'
+            $App.DetectionMethod = 'Registry'
+        }
+    }
+
     $null = New-DetectionScript -App $App -Destination (Join-Path $helperPath 'detection.ps1') -Config $Config
 
     # A logo shipped with the package wins - that is where packages built with
@@ -750,26 +776,12 @@ function Write-PackageHelper {
         $null = Resolve-AppLogo -AppName $App.Name -Destination (Join-Path $helperPath 'logo.png')
     }
 
-    # Package metadata - the single source of truth for Publish-CMApplication.
-    $metadata = [ordered]@{
-        appFullName      = $appFullName
-        name             = $App.Name
-        version          = $App.Version
-        publisher        = $App.Publisher
-        description      = if ($App.Notes) { $App.Notes } else { $App.Name }
-        detectionMethod  = if ($App.DetectionMethod) { $App.DetectionMethod } else { 'Registry' }
-        createdBy        = $env:USERNAME
-        createdOn        = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-        toolVersion      = $toolVersion
-    }
-    $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $helperPath 'package.json') -Encoding UTF8
-
     # Thin per-package publisher script.
     $deployTemplate = Get-Content -LiteralPath (Join-Path $rootDir 'Templates\deploy_template.ps1') -Raw
     $deployTemplate = $deployTemplate.Replace('#ROOT#', $rootDir).Replace('#APP#', $appFullName).Replace('#TOOLVER#', $toolVersion)
     Set-Content -LiteralPath (Join-Path $helperPath 'deploy.ps1') -Value $deployTemplate -Encoding UTF8
 
-    return [pscustomobject]$metadata
+    return (Get-PackageMetadata -PackageRoot $PackageRoot -Config $Config)
 }
 
 <#
@@ -790,23 +802,147 @@ function Split-AppFolderName {
 }
 
 <#
-    Reads AppVendor / AppName / AppVersion out of an existing
-    Invoke-AppDeployToolkit.ps1.
+    Reads the $adtSession block of Invoke-AppDeployToolkit.ps1 - the package's
+    own metadata. Parsed via the PowerShell AST so reformatting, double quotes
+    or extra keys do not break it; falls back to a regex if the file cannot be
+    parsed.
 #>
 function Read-ADTMetadata {
     param([Parameter(Mandatory = $true)][string]$ContentRoot)
 
-    $result = [pscustomobject]@{ Publisher = ''; Name = ''; Version = '' }
+    $result = [pscustomobject]@{ Publisher = ''; Name = ''; Version = ''; Author = ''; Date = '' }
 
     $scriptPath = Join-Path $ContentRoot 'Invoke-AppDeployToolkit.ps1'
     if (-not (Test-Path -LiteralPath $scriptPath)) { return $result }
 
+    $map = @{
+        AppVendor       = 'Publisher'
+        AppName         = 'Name'
+        AppVersion      = 'Version'
+        AppScriptAuthor = 'Author'
+        AppScriptDate   = 'Date'
+    }
+
+    try {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
+
+        $assignment = $ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -eq '$adtSession'
+        }, $true) | Select-Object -First 1
+
+        if ($assignment) {
+            $hashtable = $assignment.Right.Find({
+                param($node) $node -is [System.Management.Automation.Language.HashtableAst]
+            }, $true)
+
+            if ($hashtable) {
+                foreach ($pair in $hashtable.KeyValuePairs) {
+                    $key = $pair.Item1.Extent.Text.Trim("'", '"')
+                    if (-not $map.ContainsKey($key)) { continue }
+
+                    $value = $pair.Item2.Extent.Text.Trim()
+                    # Anything that is not a plain literal (a variable, an
+                    # expression) counts as "not set".
+                    if ($value.StartsWith('$')) { continue }
+                    $result.($map[$key]) = $value.Trim("'", '"')
+                }
+                return $result
+            }
+        }
+    }
+    catch { }
+
     $content = Get-Content -LiteralPath $scriptPath -Raw
-    if ($content -match "AppVendor\s*=\s*'([^']*)'")  { $result.Publisher = $Matches[1] }
-    if ($content -match "AppName\s*=\s*'([^']*)'")    { $result.Name      = $Matches[1] }
-    if ($content -match "AppVersion\s*=\s*'([^']*)'") { $result.Version   = $Matches[1] }
+    foreach ($key in $map.Keys) {
+        if ($content -match ("{0}\s*=\s*'([^']*)'" -f $key)) { $result.($map[$key]) = $Matches[1] }
+    }
 
     return $result
+}
+
+<#
+    The single MSI of a package, if there is exactly one. That is what PSADT's
+    zero-config deployment runs on - and it is also the authoritative source for
+    publisher, version and ProductCode of such a package.
+#>
+function Get-PackageMsi {
+    param([Parameter(Mandatory = $true)][string]$ContentRoot)
+
+    $filesPath = Join-Path $ContentRoot 'Files'
+    if (-not (Test-Path -LiteralPath $filesPath)) { return $null }
+
+    $msi = @(Get-ChildItem -LiteralPath $filesPath -Filter '*.msi' -File -ErrorAction SilentlyContinue)
+    if ($msi.Count -eq 1) { return $msi[0] }
+    return $null
+}
+
+<#
+    Everything ConfigMgr needs about a package, derived from the package itself:
+
+        name / version   folder name "<Name> - <Version>" - the naming convention
+        publisher        $adtSession.AppVendor
+        MSI packages     $adtSession is deliberately empty (PSADT zero-config),
+                         so publisher, version and ProductCode are read from the
+                         single MSI in .\Files and detection is by ProductCode
+
+    Apps.csv is only consulted when the package itself says nothing.
+#>
+function Get-PackageMetadata {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageRoot,
+        $Config = (Get-ActiveConfig)
+    )
+
+    $folderName  = Split-Path -Leaf $PackageRoot
+    $parsed      = Split-AppFolderName -FolderName $folderName
+    $contentPath = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
+
+    $adt = Read-ADTMetadata -ContentRoot $contentPath
+    $msi = Get-PackageMsi -ContentRoot $contentPath
+
+    # PSADT derives vendor, name and version from the MSI when the session
+    # metadata is left empty - that is the zero-config case.
+    $isZeroConfigMsi = ($null -ne $msi) -and -not $adt.Name -and -not $adt.Version
+
+    $name        = $parsed.Name
+    $version     = $parsed.Version
+    $publisher   = $adt.Publisher
+    $productCode = ''
+
+    if ($isZeroConfigMsi) {
+        $properties = Get-MsiProperties -Path $msi.FullName
+        $productCode = [string]$properties['ProductCode']
+        if (-not $publisher) { $publisher = [string]$properties['Manufacturer'] }
+        if (-not $name)      { $name      = [string]$properties['ProductName'] }
+        if (-not $version)   { $version   = [string]$properties['ProductVersion'] }
+    }
+    else {
+        if (-not $name)    { $name    = $adt.Name }
+        if (-not $version) { $version = $adt.Version }
+    }
+
+    # The master list fills the gaps the package leaves.
+    $description = $name
+    $row = Get-AppListRow -Name $name -Version $version
+    if ($row) {
+        if (-not $publisher) { $publisher = $row.Publisher }
+        if ($row.Notes)      { $description = $row.Notes }
+    }
+
+    return [pscustomobject]@{
+        appFullName     = (Get-AppFullName -Name $name -Version $version)
+        name            = $name
+        version         = $version
+        publisher       = $publisher
+        description     = $description
+        detectionMethod = if ($isZeroConfigMsi) { 'MSI' } else { 'Registry' }
+        productCode     = $productCode
+        isZeroConfigMsi = $isZeroConfigMsi
+        author          = $adt.Author
+        created         = $adt.Date
+    }
 }
 
 function Get-AppListRow {
@@ -870,7 +1006,7 @@ function Import-AppPackage {
         throw "No PSADT script found in [$content] - this does not look like a package."
     }
 
-    $adt = Read-ADTMetadata -ContentRoot $content
+    $existing = Get-PackageMetadata -PackageRoot $PackageRoot -Config $Config
     $row = Get-AppListRow -Name $parsed.Name -Version $parsed.Version
 
     $app = [pscustomobject]@{
@@ -892,9 +1028,17 @@ function Import-AppPackage {
         }
     }
     else {
-        if ($adt.Publisher) { $app.Publisher = $adt.Publisher }
         Write-Info 'Not in the app list yet.'
     }
+
+    # The package itself outranks the list: a zero-config MSI package brings its
+    # own publisher, version and ProductCode.
+    if ($existing.isZeroConfigMsi) {
+        Write-Info 'Single MSI without PSADT metadata - zero-config deployment, detection by ProductCode.'
+        $app.DetectionMethod = 'MSI'
+        $app.ProductCode     = $existing.productCode
+    }
+    if ($existing.publisher) { $app.Publisher = $existing.publisher }
 
     # Ask only when something essential is missing and we are not in a bulk run.
     if ((-not $app.Publisher -or -not $app.Version) -and -not $Bulk) {
@@ -916,6 +1060,15 @@ function Import-AppPackage {
 
     if (-not $app.Version) { throw "No version could be determined for [$folderName] - expected a folder named '<Name> - <Version>'." }
 
+    # Write the metadata where it belongs: into the package's own PSADT script.
+    # Zero-config MSI packages keep their empty fields.
+    if (-not $existing.isZeroConfigMsi) {
+        $author = $Config.packageAuthor
+        if ([string]::IsNullOrWhiteSpace($author)) { $author = $env:USERNAME }
+        Set-ADTAppMetadata -ContentRoot $content -Publisher $app.Publisher -Name $app.Name -Version $app.Version -Author $author
+        Write-Ok 'Metadata written into Invoke-AppDeployToolkit.ps1 (empty fields only).'
+    }
+
     $metadata = Write-PackageHelper -PackageRoot $PackageRoot -App $app -Config $Config
 
     # Keep the master list complete - that is what the naming convention lives on.
@@ -932,33 +1085,22 @@ function Get-AppPackage {
     $results = @()
 
     foreach ($dir in (Get-ChildItem -LiteralPath $workRoot -Directory -ErrorAction SilentlyContinue)) {
-        $helperPath   = Get-PackageHelperPath -PackageRoot $dir.FullName
-        $deployScript = Join-Path $helperPath 'deploy.ps1'
-        $metadataPath = Join-Path $helperPath 'package.json'
-        $contentPath  = Get-PackageContentPath -PackageRoot $dir.FullName -Config $Config
-        $adtScript    = Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'
+        $helperPath    = Get-PackageHelperPath -PackageRoot $dir.FullName
+        $deployScript  = Join-Path $helperPath 'deploy.ps1'
+        $detectionPath = Join-Path $helperPath 'detection.ps1'
+        $contentPath   = Get-PackageContentPath -PackageRoot $dir.FullName -Config $Config
+        $adtScript     = Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'
 
-        $isManaged = (Test-Path -LiteralPath $metadataPath) -and (Test-Path -LiteralPath $deployScript)
+        $isManaged = (Test-Path -LiteralPath $detectionPath) -and (Test-Path -LiteralPath $deployScript)
         $isPackage = Test-Path -LiteralPath $adtScript
 
         # Packages built outside this tool have no _Helper folder - list them
         # anyway so they can be imported instead of staying invisible.
         if (-not $isManaged -and -not $isPackage) { continue }
 
-        $metadata = $null
-        if ($isManaged) {
-            try { $metadata = Get-Content -Raw -LiteralPath $metadataPath -Encoding UTF8 | ConvertFrom-Json } catch { }
-        }
-
-        if ($metadata) {
-            $name    = $metadata.name
-            $version = $metadata.version
-        }
-        else {
-            $parsed  = Split-AppFolderName -FolderName $dir.Name
-            $name    = $parsed.Name
-            $version = $parsed.Version
-        }
+        $parsed  = Split-AppFolderName -FolderName $dir.Name
+        $name    = $parsed.Name
+        $version = $parsed.Version
 
         $reference = if ($isManaged) { $deployScript } else { $adtScript }
 
@@ -987,19 +1129,21 @@ function Publish-CMApplication {
     )
 
     $helperPath   = Get-PackageHelperPath -PackageRoot $PackageRoot
-    $metadataPath = Join-Path $helperPath 'package.json'
+    $detectionPath = Join-Path $helperPath 'detection.ps1'
 
     # A package built outside this tool is imported on the fly.
-    if (-not (Test-Path -LiteralPath $metadataPath)) {
+    if (-not (Test-Path -LiteralPath $detectionPath)) {
         $null = Import-AppPackage -PackageRoot $PackageRoot -Bulk:$Bulk -Config $Config
     }
 
-    $metadata     = Get-Content -Raw -LiteralPath $metadataPath -Encoding UTF8 | ConvertFrom-Json
+    $metadata     = Get-PackageMetadata -PackageRoot $PackageRoot -Config $Config
     $appFullName  = $metadata.appFullName
     $contentPath  = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
     $contentUnc   = ConvertTo-CMContentPath -Path $contentPath -Config $Config
     $iconFile     = Join-Path $helperPath 'logo.png'
-    $detectionScript = Get-Content -Raw -LiteralPath (Join-Path $helperPath 'detection.ps1')
+    $detectionScript = Get-Content -Raw -LiteralPath $detectionPath
+
+    if (-not $metadata.version) { throw "No version could be determined for [$PackageRoot] - expected a folder named '<Name> - <Version>'." }
 
     Write-Step "Publishing to ConfigMgr: $appFullName"
     Write-Info "Content location: $contentUnc"

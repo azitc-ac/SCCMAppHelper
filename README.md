@@ -92,7 +92,6 @@ That replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
         deploy.ps1               <- publishes this package to ConfigMgr
         detection.ps1            <- generated detection script
         logo.png                 <- application icon, resized to max. 250x250
-        package.json             <- package metadata
 ```
 
 Legacy packages whose PSADT root is the package folder itself are detected and handled as
@@ -115,6 +114,27 @@ package writes the missing `_Helper` folder first:
 
 `deploy.ps1` is intentionally thin: it only calls `Publish-CMApplication` from the tool, so
 fixes in the tool also apply to packages created earlier.
+
+### Where the metadata lives
+
+There is no separate metadata file - a package describes itself:
+
+| Value | Source |
+| --- | --- |
+| Name, version | the folder name `<Name> - <Version>` - the naming convention is the key |
+| Publisher | `AppVendor` in the `$adtSession` block of `Invoke-AppDeployToolkit.ps1` |
+| Author, date | `AppScriptAuthor` / `AppScriptDate` in the same block |
+| Description | `Notes` of the matching `Apps.csv` row, otherwise the name |
+| Detection | the rendered `_Helper\detection.ps1` |
+
+**MSI packages** are the deliberate exception. When `DetectionMethod` is `MSI`, the tool
+leaves `AppVendor`, `AppName` and `AppVersion` empty so PSADT runs its zero-config MSI
+deployment and takes them from the MSI itself. Publisher and ProductCode are then read
+straight out of the single MSI in `.\Files` - nothing has to be maintained by hand, and
+detection is by ProductCode.
+
+`$adtSession` is read through the PowerShell AST, so reformatting or double quotes do not
+break it.
 
 ## Detection scripts
 

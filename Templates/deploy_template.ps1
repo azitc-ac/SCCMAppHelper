@@ -8,7 +8,8 @@
     The script is deliberately thin - all logic lives in the tool's
     Publish-CMApplication, so improvements and fixes also reach packages that
     were created with an earlier version of the tool. The package metadata is
-    read from .\package.json.
+    read from the package itself: the folder name plus the $adtSession block of
+    Invoke-AppDeployToolkit.ps1 (or the MSI, for a zero-config MSI package).
 
 .PARAMETER bulk
     Suppresses interactive questions (used when several packages are published
