@@ -459,13 +459,17 @@ function Open-SelectDialog {
         $null = $dataGrid.Columns.Add($column)
     }
     $dataGrid.ItemsSource = $items
+    [Windows.Automation.AutomationProperties]::SetAutomationId($window, 'SelectDialog')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($dataGrid, 'SelectGrid')
 
     $okButton = New-Object Windows.Controls.Button
     $okButton.Height = 40; $okButton.Width = 100; $okButton.Content = 'OK'; $okButton.Margin = '5'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($okButton, 'OK')
     $okButton.Add_Click({ $window.DialogResult = $true })
 
     $cancelButton = New-Object Windows.Controls.Button
     $cancelButton.Height = 40; $cancelButton.Width = 100; $cancelButton.Content = 'Cancel'; $cancelButton.Margin = '5'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($cancelButton, 'Cancel')
     $cancelButton.Add_Click({ $window.DialogResult = $false })
 
     $buttonPanel = New-Object Windows.Controls.StackPanel
@@ -899,6 +903,10 @@ function Show-CatalogDialog {
         $null = $dataGrid.Columns.Add($col)
     }
     $dataGrid.ItemsSource = @($Packages)
+    [Windows.Automation.AutomationProperties]::SetAutomationId($window, 'CatalogDialog')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($dataGrid, 'CatalogGrid')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($searchBox, 'SearchQuery')
+    [Windows.Automation.AutomationProperties]::SetAutomationId($searchButton, 'Search')
     [Windows.Controls.Grid]::SetRow($dataGrid, 1)
     $null = $grid.Children.Add($dataGrid)
 
@@ -909,8 +917,10 @@ function Show-CatalogDialog {
     $buttons.Margin = '0,10,0,0'
     $okButton = New-Object Windows.Controls.Button
     $okButton.Content = 'Next'; $okButton.Padding = '18,6'; $okButton.Margin = '0,0,8,0'; $okButton.IsDefault = $true
+    [Windows.Automation.AutomationProperties]::SetAutomationId($okButton, 'Next')
     $cancelButton = New-Object Windows.Controls.Button
     $cancelButton.Content = 'Cancel'; $cancelButton.Padding = '18,6'; $cancelButton.IsCancel = $true
+    [Windows.Automation.AutomationProperties]::SetAutomationId($cancelButton, 'Cancel')
     $null = $buttons.Children.Add($okButton)
     $null = $buttons.Children.Add($cancelButton)
     [Windows.Controls.Grid]::SetRow($buttons, 2)
