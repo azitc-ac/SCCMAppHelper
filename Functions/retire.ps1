@@ -36,6 +36,12 @@ function Get-CMApplicationInventory {
 
     $signature = [regex]::Escape((Get-ToolSignature))
 
+    # The collections that belong to an application are the ones named after it,
+    # not the ones it happens to be deployed to. Deriving them from deployments
+    # misses every collection that has none - which is exactly the state a
+    # Retire leaves behind, and the state createDeployments = false produces.
+    $ownedPatterns = @($Config.collections | ForEach-Object { $_.namePattern })
+
     # The block returns its result rather than appending to a variable outside
     # it: a scriptblock run with & cannot assign to the caller's variables, it
     # only ever gets a copy. Mutating a hashtable works, "+=" does not.
@@ -66,15 +72,22 @@ function Get-CMApplicationInventory {
 
             $deployments = @(Get-CMApplicationDeployment -Name $displayName -ErrorAction SilentlyContinue)
 
+            $owned = @()
+            foreach ($pattern in $ownedPatterns) {
+                $collectionName = $pattern.Replace('{App}', $displayName)
+                if (Get-CMDeviceCollection -Name $collectionName -ErrorAction SilentlyContinue) { $owned += $collectionName }
+            }
+
             $rows += [pscustomobject]@{
-                AppName       = $displayName
-                Name          = $application.LocalizedDisplayName
-                Version       = [string]$application.SoftwareVersion
-                Deployments   = $deployments.Count
-                Collections   = @($deployments | ForEach-Object { $_.CollectionName })
-                SupersededBy  = $supersededBy
-                Origin        = $(if ($application.SDMPackageXML -match $signature) { 'this tool' } else { 'foreign' })
-                ModelName     = $application.ModelName
+                AppName          = $displayName
+                Name             = $application.LocalizedDisplayName
+                Version          = [string]$application.SoftwareVersion
+                Deployments      = $deployments.Count
+                Collections      = @($deployments | ForEach-Object { $_.CollectionName })
+                OwnedCollections = $owned
+                SupersededBy     = $supersededBy
+                Origin           = $(if ($application.SDMPackageXML -match $signature) { 'this tool' } else { 'foreign' })
+                ModelName        = $application.ModelName
             }
         }
 
@@ -127,21 +140,14 @@ function Get-RetirePlan {
         $Config = (Get-ActiveConfig)
     )
 
-    # Collections named after the application belong to it. Everything else -
-    # the catalog collection from globalDeployments above all - does not.
-    $ownedPatterns = @($Config.collections | ForEach-Object { $_.namePattern })
-
+    # Collections named after the application belong to it - the inventory
+    # already worked out which of those exist. Everything else the application
+    # happens to be deployed to, the catalog collection from globalDeployments
+    # above all, keeps its deployment removed and itself intact.
     $plan = @()
     foreach ($application in $Applications) {
-        $owned = @()
-        $foreignCollections = @()
-        foreach ($collection in $application.Collections) {
-            $isOwned = $false
-            foreach ($pattern in $ownedPatterns) {
-                if ($collection -eq $pattern.Replace('{App}', $application.AppName)) { $isOwned = $true; break }
-            }
-            if ($isOwned) { $owned += $collection } else { $foreignCollections += $collection }
-        }
+        $owned = @($application.OwnedCollections)
+        $foreignCollections = @($application.Collections | Where-Object { $_ -notin $owned })
 
         $packageRoot = Join-Path (Get-PackageWorkRoot -Config $Config) $application.AppName
         if (-not (Test-Path -LiteralPath $packageRoot)) { $packageRoot = $null }
@@ -220,25 +226,42 @@ function Invoke-RetirePlan {
                 catch { Write-Fail ("Deployment on [{0}]: {1}" -f $collection, $_.Exception.Message) }
             }
 
-            # 2. Newer versions have to stop superseding it before it can go.
+            # 2. Newer versions have to stop superseding it - not because
+            #    ConfigMgr refuses the deletion otherwise, it does not, but
+            #    because it would leave them pointing at something that is gone.
+            #
+            #    Remove-CMDeploymentTypeSupersedence warns that it is deprecated
+            #    and points at Set-CMApplicationSupersedence -RemoveSupersedence.
+            #    Do not follow that advice: the replacement answers "object
+            #    reference not set to an instance of an object" in both its
+            #    parameter sets, by name and by object, while the deprecated
+            #    cmdlet does the job. The warning is suppressed rather than the
+            #    call changed.
+            $stranded = @()
             foreach ($other in $entry.DissolveSupersedence) {
                 try {
                     $newDt = Get-CMDeploymentType -ApplicationName $other -ErrorAction Stop | Select-Object -First 1
                     $oldDt = Get-CMDeploymentType -ApplicationName $entry.AppName -ErrorAction Stop | Select-Object -First 1
-                    $null = Set-CMApplicationSupersedence -Name $other `
-                                -CurrentDeploymentTypeName $newDt.LocalizedDisplayName `
-                                -SupersededApplicationName $entry.AppName `
-                                -OldDeploymentTypeName $oldDt.LocalizedDisplayName `
-                                -RemoveSupersedence -ErrorAction Stop
+                    $null = Remove-CMDeploymentTypeSupersedence -SupersedingDeploymentType $newDt `
+                                -SupersededDeploymentType $oldDt -Force `
+                                -ErrorAction Stop -WarningAction SilentlyContinue
                     Write-Ok "Supersedence dissolved: $other"
                 }
-                catch { Write-Fail ("Supersedence on [{0}]: {1}" -f $other, $_.Exception.Message) }
+                catch {
+                    $stranded += $other
+                    Write-Fail ("Supersedence on [{0}]: {1}" -f $other, $_.Exception.Message)
+                }
             }
 
             # 3. Content, then the collections that belong to the application.
+            #    Remove-CMContentDistribution insists on being told where from.
             if ($entry.RevokeContent) {
+                $contentParams = @{ ApplicationName = $entry.AppName; Force = $true; ErrorAction = 'Stop' }
+                if ($Config.distributionPointGroupName) { $contentParams['DistributionPointGroupName'] = $Config.distributionPointGroupName }
+                elseif ($Config.distributionPointName)  { $contentParams['DistributionPointName']      = $Config.distributionPointName }
+
                 try {
-                    $null = Remove-CMContentDistribution -ApplicationName $entry.AppName -Force -ErrorAction Stop
+                    $null = Remove-CMContentDistribution @contentParams
                     Write-Ok 'Content revoked.'
                 }
                 catch { Write-Info ("Content: {0}" -f $_.Exception.Message) }
@@ -252,16 +275,33 @@ function Invoke-RetirePlan {
                 catch { Write-Fail ("Collection [{0}]: {1}" -f $collection, $_.Exception.Message) }
             }
 
-            # 4. The application last, so a failure above leaves something to retry.
-            if ($entry.DeleteApplication) {
+            # 4. The application last, so a failure above leaves something to
+            #    retry - and only if nothing is still pointing at it. ConfigMgr
+            #    does not enforce this: it will happily delete an application
+            #    that four others supersede and leave them referencing something
+            #    that no longer exists, which no cmdlet can then clean up,
+            #    because removing a supersedence needs the deployment type that
+            #    has just been deleted.
+            if ($entry.DeleteApplication -and $stranded.Count -gt 0) {
+                Write-Fail ("Not deleting [{0}]: {1} application(s) still supersede it and could not be dissolved - they would be left pointing at nothing. Fix the supersedence in the console first." -f
+                    $entry.AppName, $stranded.Count)
+            }
+            $applicationDeleted = $false
+            if ($entry.DeleteApplication -and $stranded.Count -eq 0) {
                 try {
                     $null = Remove-CMApplication -Name $entry.AppName -Force -ErrorAction Stop
+                    $applicationDeleted = $true
                     Write-Ok 'Application deleted.'
                 }
                 catch { Write-Fail ("Application: {0}" -f $_.Exception.Message) }
             }
 
-            if ($entry.DeletePackageFolder) {
+            # The source stays as long as the application does - otherwise the
+            # content location points at a folder that is no longer there.
+            if ($entry.DeletePackageFolder -and -not $applicationDeleted) {
+                Write-Info "Keeping the package folder - the application is still in the site."
+            }
+            elseif ($entry.DeletePackageFolder) {
                 try {
                     Remove-Item -LiteralPath $entry.DeletePackageFolder -Recurse -Force -ErrorAction Stop
                     Write-Ok "Folder deleted: $($entry.DeletePackageFolder)"
