@@ -46,7 +46,7 @@ function Show-StartDialog {
 
     $dlg = New-Object Windows.Window
     $dlg.Title = $Title
-    $dlg.Width = 1180
+    $dlg.Width = 960
     $dlg.Height = 450
     if ($null -ne $Owner) { $dlg.Owner = $Owner; $dlg.WindowStartupLocation = 'CenterOwner' }
     else { $dlg.WindowStartupLocation = 'CenterScreen' }
@@ -72,7 +72,7 @@ function Show-StartDialog {
 
     $uniform = New-Object Windows.Controls.Primitives.UniformGrid
     $uniform.Rows = 1
-    $uniform.Columns = 5
+    $uniform.Columns = 4
     $uniform.Margin = '0,8,0,0'
     [Windows.Controls.Grid]::SetRow($uniform, 1)
     $null = $root.Children.Add($uniform)
@@ -162,7 +162,6 @@ function Show-StartDialog {
         (New-OptionTile -Caption 'Create packages' -Description 'Create PSADT packages on the source share.' -IconElement (New-Glyph -Code 0xE710) -ReturnValue 'CreateNew' -Width $TileWidth),
         (New-OptionTile -Caption 'Create and publish' -Description 'Create packages and publish them as ConfigMgr applications.' -IconElement $iconCreatePublish -ReturnValue 'CreateNewAndPublish' -Width $TileWidth),
         (New-OptionTile -Caption 'Publish packages' -Description 'Publish existing packages as ConfigMgr applications.' -IconElement (New-Glyph -Code 0xE898) -ReturnValue 'PublishExisting' -Width $TileWidth),
-        (New-OptionTile -Caption 'New from catalog' -Description 'Download an installer from the winget-pkgs manifests and add it to Apps.csv.' -IconElement (New-Glyph -Code 0xE896) -ReturnValue 'NewFromCatalog' -Width $TileWidth),
         (New-OptionTile -Caption 'Tools' -Description 'Collection maintenance and reporting helpers.' -IconElement (New-Glyph -Code 0xE90F) -ReturnValue 'Tools' -Width $TileWidth)
     )
     # The handler is attached here rather than inside New-OptionTile, so that it
@@ -422,6 +421,30 @@ function Open-EditDialog {
         catch { $null = Show-MessageDialog -Text ("EXE could not be read: {0}" -f $_.Exception.Message) -Caption 'EXE' -Buttons 'OK' -Icon 'Error' }
     })
 
+    # The third prefill source. From MSI and From EXE read a file the user
+    # picked; this one picks the file for them first, out of the winget-pkgs
+    # manifests, and then reads it exactly the same way.
+    $catalogButton = New-Object Windows.Controls.Button
+    $catalogButton.Content = 'From catalog...'
+    $catalogButton.Width = 120
+    $catalogButton.Margin = '5'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($catalogButton, 'FromCatalog')
+    $catalogButton.Add_Click({
+        try {
+            $found = Read-CatalogPackage
+            if (-not $found) { return }
+
+            foreach ($column in 'Publisher', 'Name', 'Version', 'DetectionMethod', 'DetectionPattern', 'ProductCode', 'Notes') {
+                Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @($column) -Value ([string]$found.Row.$column)
+            }
+
+            $null = Show-MessageDialog -Text ("{0} {1} is ready.`n`nThe installer is here:`n{2}`n`nSignature: {3}" -f
+                        $found.Row.Name, $found.Row.Version, $found.File, $found.Signature) `
+                    -Caption 'From catalog' -Buttons 'OK' -Icon 'Information'
+        }
+        catch { $null = Show-MessageDialog -Text ("The catalog could not be read: {0}" -f $_.Exception.Message) -Caption 'From catalog' -Buttons 'OK' -Icon 'Warning' }
+    })
+
     $okButton = New-Object Windows.Controls.Button
     $okButton.Content = 'OK'
     $okButton.Width = 100
@@ -442,6 +465,7 @@ function Open-EditDialog {
     if (-not $NoFilePrefill) {
         $null = $buttonPanel.Children.Add($msiButton)
         $null = $buttonPanel.Children.Add($exeButton)
+        $null = $buttonPanel.Children.Add($catalogButton)
     }
     $null = $buttonPanel.Children.Add($okButton)
     $null = $buttonPanel.Children.Add($cancelButton)

@@ -54,7 +54,6 @@ while ($continue) {
         'CreateNew'           { Write-Step 'Packaging assistant';               createApps }
         'CreateNewAndPublish' { Write-Step 'Packaging + ConfigMgr publishing';  createApps -createAndPublish }
         'PublishExisting'     { Write-Step 'Publishing existing packages';      deployApps }
-        'NewFromCatalog'      { Write-Step 'New from catalog';                 newFromCatalog }
         'Tools'               { Write-Step 'Tools';                             Show-ToolsMenu }
         'Cancel'              { Write-Info 'Cancelled';        $continue = $false }
         'Closed'              { Write-Info 'Closed with [X]';  $continue = $false }
