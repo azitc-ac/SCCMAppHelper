@@ -326,13 +326,8 @@ it is the tool's own function in `Functions\setup.ps1`.
 
 ### Still open on a real site
 
-* `Edit-RoleCollectionMembership` was verified cmdlet by cmdlet, not through its dialogs.
-* The confirmation boxes of `newFromCatalog` were not driven. `Show-CatalogDialog` now carries
-  automation ids, but the `MessageBox` prompts in front of the download are Win32 dialogs
-  rather than WPF, so they need a different handle.
-* `catalog.json` holds 20 package ids and only `7zip.7zip` and `Notepad++.Notepad++` were
-  confirmed against the repository. A wrong id fails with "Not found in the manifest
-  repository" and is a one line fix, but they are not verified.
+* `Edit-RoleCollectionMembership` and the rest of the tools menu were verified cmdlet by
+  cmdlet, not through their dialogs, and are not in `Test-Dialogs.ps1`.
 * **A pure winget path is missing.** Everything here downloads a fixed version and deploys it
   the traditional way. `IntuneWin32Helper` can also build version independent packages that
   call winget on the client and install whatever is current; the same is wanted here. Two
