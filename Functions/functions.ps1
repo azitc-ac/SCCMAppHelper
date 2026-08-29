@@ -815,6 +815,20 @@ function Resolve-PackageApp {
         }
     }
 
+    # A registry detection with no key can still be answered when the package
+    # deploys a single MSI: the ProductCode *is* the uninstall key of an MSI
+    # installed product. That is what makes the packages the older scripts built
+    # publishable without filling anything in by hand - their rows carry an empty
+    # DetectionPattern, which used to mean "DisplayName like <Name>*".
+    if ($app.DetectionMethod -eq 'Registry' -and -not $app.DetectionPattern -and -not $app.ProductCode) {
+        $contentPath = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
+        $msi = Get-PackageMsi -ContentRoot $contentPath
+        if ($msi) {
+            $app.DetectionPattern = [string](Get-MsiProperties -Path $msi.FullName)['ProductCode']
+            Write-Info "Uninstall key read from $($msi.Name): $($app.DetectionPattern)"
+        }
+    }
+
     return $app
 }
 
@@ -938,6 +952,12 @@ function New-AppDetectionClause {
             if (-not $key) {
                 throw 'DetectionMethod is Registry but DetectionPattern holds no uninstall key (and there is no ProductCode to derive it from).'
             }
+            # A wildcard is a leftover from when Registry detection meant
+            # "DisplayName like ...". A native clause needs one exact key, and it
+            # would take the wildcard without complaint and then match nothing.
+            if ($key -match '[*?]') {
+                throw "DetectionPattern [$key] is a DisplayName pattern, not an uninstall key - registry detection needs the exact key since it became a native clause."
+            }
             if ($key -notmatch '^(SOFTWARE|SYSTEM)\\') {
                 $key = "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$key"
             }
@@ -983,14 +1003,20 @@ function New-AppDetectionClause {
 function Get-DetectionFingerprint {
     param($Clauses)
 
+    # The operator belongs in here. Without it a foreign clause comparing
+    # "ProductVersion Equals 11.24.0" looks the same as ours comparing
+    # "GreaterEquals 11.24.0", and the tool would leave the foreign detection in
+    # place while reporting success - they mean different things: Equals stops
+    # counting the product as installed the moment it is updated.
     $parts = @(
         foreach ($clause in @($Clauses)) {
-            '{0}|{1}|{2}|{3}|{4}|{5}' -f $clause.SettingSourceType,
-                                         $clause.Setting.Location,
-                                         $clause.Setting.ValueName,
-                                         $clause.Setting.Is64Bit,
-                                         $clause.PropertyPath,
-                                         $clause.Constant.Value
+            '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f $clause.SettingSourceType,
+                                             $clause.Setting.Location,
+                                             $clause.Setting.ValueName,
+                                             $clause.Setting.Is64Bit,
+                                             $clause.PropertyPath,
+                                             $clause.Operator,
+                                             $clause.Constant.Value
         }
     )
     return (($parts | Sort-Object) -join ' && ')
@@ -1405,233 +1431,237 @@ function Publish-CMApplication {
     Write-Step "Publishing to ConfigMgr: $appFullName"
     Write-Info "Content location: $contentUnc"
 
-    Invoke-InCMSite -Config $Config -ScriptBlock {
+    # The artifact folder below %TEMP% has to go even when publishing throws -
+    # a package that is refused used to leave one behind on every attempt.
+    try {
+        Invoke-InCMSite -Config $Config -ScriptBlock {
 
-        # ---------------------------------------------------------- application
-        $application = Get-CMApplication -Name $appFullName -Fast -ErrorAction SilentlyContinue
+            # ---------------------------------------------------------- application
+            $application = Get-CMApplication -Name $appFullName -Fast -ErrorAction SilentlyContinue
 
-        if ($application) {
-            $update = $true
-            if (-not $Bulk) {
-                $answer = Show-MessageDialog -Text "The application`n`n$appFullName`n`nalready exists. Update it (deployment type, detection, content)?`n`nNo = skip this package." -Caption 'Application already exists' -Buttons 'YesNo' -Icon 'Question'
-                $update = ($answer -eq 'Yes')
-            }
-            if (-not $update) {
-                Write-Warn 'Skipped by user.'
-                return
-            }
-            Write-Info 'Application exists - updating.'
-        }
-        else {
-            Write-Info 'Creating application...'
-            $newAppParams = @{
-                Name             = $appFullName
-                LocalizedName    = $metadata.name
-                Description      = $metadata.description
-                Publisher        = $metadata.publisher
-                SoftwareVersion  = $metadata.version
-                AutoInstall      = $true          # allow use in task sequences
-                ErrorAction      = 'Stop'
-            }
-            if (Test-Path -LiteralPath $iconFile) { $newAppParams['IconLocationFile'] = $iconFile }
-
-            $application = New-CMApplication @newAppParams
-            Write-Ok "Application created: $appFullName"
-
-            $applicationFolder = Resolve-CMFolderPath -FolderPath $Config.applicationFolderPath -Config $Config -RootNode 'Application'
-            if ($applicationFolder -and (New-CMFolderPath -FolderPath $applicationFolder)) {
-                try {
-                    $null = Move-CMObject -FolderPath $applicationFolder -InputObject $application -ErrorAction Stop
-                    Write-Ok "Moved to console folder [$applicationFolder]"
+            if ($application) {
+                $update = $true
+                if (-not $Bulk) {
+                    $answer = Show-MessageDialog -Text "The application`n`n$appFullName`n`nalready exists. Update it (deployment type, detection, content)?`n`nNo = skip this package." -Caption 'Application already exists' -Buttons 'YesNo' -Icon 'Question'
+                    $update = ($answer -eq 'Yes')
                 }
-                catch { Write-Warn ("Could not move the application to [{0}]: {1}" -f $applicationFolder, $_.Exception.Message) }
-            }
-        }
-
-        # ------------------------------------------------------ deployment type
-        $deploymentTypeName = $appFullName
-        $existingDt = Get-CMDeploymentType -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction SilentlyContinue
-
-        $dtParams = @{
-            ApplicationName          = $appFullName
-            DeploymentTypeName       = $deploymentTypeName
-            ContentLocation          = $contentUnc
-            InstallCommand           = $Config.installCommand
-            UninstallCommand         = $Config.uninstallCommand
-            InstallationBehaviorType = 'InstallForSystem'
-            LogonRequirementType     = 'WhetherOrNotUserLoggedOn'
-            Comment                  = (Get-ToolSignature)
-            ErrorAction              = 'Stop'
-        }
-        if ($Config.maximumRuntimeMins)   { $dtParams['MaximumRuntimeMins']   = $Config.maximumRuntimeMins }
-        if ($Config.estimatedRuntimeMins) { $dtParams['EstimatedRuntimeMins'] = $Config.estimatedRuntimeMins }
-
-        # Detection: a native clause wherever the ConfigMgr client can evaluate
-        # it itself, a PowerShell script only for DetectionMethod = Script.
-        if ($app.DetectionMethod -eq 'Script') {
-            $dtParams['ScriptLanguage'] = 'PowerShell'
-            $dtParams['ScriptText']     = Get-Content -Raw -LiteralPath $artifact.DetectionScript
-            Write-Info 'Detection: PowerShell script.'
-        }
-        else {
-            $detection = New-AppDetectionClause -App $app
-            $dtParams['AddDetectionClause'] = $detection.Clauses
-            Write-Info ("Detection: native {0} clause, {1} rule(s)." -f $app.DetectionMethod, $detection.Clauses.Count)
-        }
-
-        if ($existingDt) {
-            # Detection clauses are only ever added, never replaced, and a clause
-            # that was created together with the deployment type cannot be
-            # removed again at all - Set-CMScriptDeploymentType reports it as
-            # "not found" and silently leaves it in place. Re-applying the same
-            # clauses on every publish therefore stacks another copy on top and
-            # the rule ends up referencing all of them.
-            # So the detection is compared first and only touched when it really
-            # differs. ScriptText has no such problem, it simply overwrites.
-            if ($dtParams.ContainsKey('AddDetectionClause')) {
-                $stored = Get-DeploymentTypeDetection -DeploymentType $existingDt
-
-                if ($stored.Fingerprint -eq $detection.Fingerprint) {
-                    $dtParams.Remove('AddDetectionClause')
-                    Write-Info 'Detection unchanged - leaving it alone.'
+                if (-not $update) {
+                    Write-Warn 'Skipped by user.'
+                    return
                 }
-                else {
-                    $obsolete = @($stored.Clauses | ForEach-Object { $_.Setting.LogicalName } | Where-Object { $_ })
-                    if ($obsolete.Count -gt 0) { $dtParams['RemoveDetectionClause'] = $obsolete }
-                    Write-Warn ("Detection differs from the {0} rule(s) on the deployment type - replacing it." -f $stored.RuleCount)
+                Write-Info 'Application exists - updating.'
+            }
+            else {
+                Write-Info 'Creating application...'
+                $newAppParams = @{
+                    Name             = $appFullName
+                    LocalizedName    = $metadata.name
+                    Description      = $metadata.description
+                    Publisher        = $metadata.publisher
+                    SoftwareVersion  = $metadata.version
+                    AutoInstall      = $true          # allow use in task sequences
+                    ErrorAction      = 'Stop'
+                }
+                if (Test-Path -LiteralPath $iconFile) { $newAppParams['IconLocationFile'] = $iconFile }
+
+                $application = New-CMApplication @newAppParams
+                Write-Ok "Application created: $appFullName"
+
+                $applicationFolder = Resolve-CMFolderPath -FolderPath $Config.applicationFolderPath -Config $Config -RootNode 'Application'
+                if ($applicationFolder -and (New-CMFolderPath -FolderPath $applicationFolder)) {
+                    try {
+                        $null = Move-CMObject -FolderPath $applicationFolder -InputObject $application -ErrorAction Stop
+                        Write-Ok "Moved to console folder [$applicationFolder]"
+                    }
+                    catch { Write-Warn ("Could not move the application to [{0}]: {1}" -f $applicationFolder, $_.Exception.Message) }
                 }
             }
 
-            Write-Info 'Updating deployment type...'
-            $null = Set-CMScriptDeploymentType @dtParams
-            Write-Ok 'Deployment type updated.'
+            # ------------------------------------------------------ deployment type
+            $deploymentTypeName = $appFullName
+            $existingDt = Get-CMDeploymentType -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction SilentlyContinue
 
-            # ConfigMgr accepts a removal it did not perform, so the result has
-            # to be checked rather than assumed.
-            if ($dtParams.ContainsKey('AddDetectionClause')) {
-                $after = Get-DeploymentTypeDetection -DeploymentType (Get-CMDeploymentType -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName)
-                if ($after.RuleCount -ne $detection.Clauses.Count) {
-                    Write-Fail ("Detection now has {0} rule(s) instead of {1}. ConfigMgr kept clauses it refuses to remove - correct the detection method of [{2}] in the console." -f $after.RuleCount, $detection.Clauses.Count, $deploymentTypeName)
-                }
+            $dtParams = @{
+                ApplicationName          = $appFullName
+                DeploymentTypeName       = $deploymentTypeName
+                ContentLocation          = $contentUnc
+                InstallCommand           = $Config.installCommand
+                UninstallCommand         = $Config.uninstallCommand
+                InstallationBehaviorType = 'InstallForSystem'
+                LogonRequirementType     = 'WhetherOrNotUserLoggedOn'
+                Comment                  = (Get-ToolSignature)
+                ErrorAction              = 'Stop'
             }
-        }
-        else {
-            Write-Info 'Creating deployment type...'
-            $null = Add-CMScriptDeploymentType @dtParams
-            Write-Ok "Deployment type created: $deploymentTypeName"
-        }
+            if ($Config.maximumRuntimeMins)   { $dtParams['MaximumRuntimeMins']   = $Config.maximumRuntimeMins }
+            if ($Config.estimatedRuntimeMins) { $dtParams['EstimatedRuntimeMins'] = $Config.estimatedRuntimeMins }
 
-        # ------------------------------------------------------------- content
-        # Start-CMContentDistribution assigns the content to a distribution
-        # target, Update-CMDistributionPoint only refreshes content that is
-        # already assigned. Which of the two applies does not follow from
-        # "the deployment type already existed": a package first published
-        # with distributeContent off has a deployment type but no content on
-        # any distribution point, and a refresh alone would never put it
-        # there - the deployments then fail with "There are no distribution
-        # points or distribution point groups in this application".
-        # So always try to assign first and fall back to a refresh when the
-        # content already sits on the target.
-        if ($Config.distributeContent) {
-            $distributionParams = @{ ApplicationName = $appFullName; ErrorAction = 'Stop' }
-            if ($Config.distributionPointGroupName) { $distributionParams['DistributionPointGroupName'] = $Config.distributionPointGroupName }
-            elseif ($Config.distributionPointName)  { $distributionParams['DistributionPointName']      = $Config.distributionPointName }
-
-            try {
-                $null = Start-CMContentDistribution @distributionParams
-                Write-Ok 'Content distribution started.'
+            # Detection: a native clause wherever the ConfigMgr client can evaluate
+            # it itself, a PowerShell script only for DetectionMethod = Script.
+            if ($app.DetectionMethod -eq 'Script') {
+                $dtParams['ScriptLanguage'] = 'PowerShell'
+                $dtParams['ScriptText']     = Get-Content -Raw -LiteralPath $artifact.DetectionScript
+                Write-Info 'Detection: PowerShell script.'
             }
-            catch {
-                # Already distributed to this target - ConfigMgr reports
-                # "No content destination was found. ... or if the content has
-                # already been distributed to the specified destination."
-                $distributionError = $_.Exception.Message
-                try {
-                    $null = Update-CMDistributionPoint -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction Stop
-                    Write-Ok 'Content already distributed - update triggered on the distribution points.'
-                }
-                catch {
-                    Write-Warn ("Content distribution: {0}" -f $distributionError)
-                    Write-Warn ("Content update: {0}" -f $_.Exception.Message)
-                }
+            else {
+                $detection = New-AppDetectionClause -App $app
+                $dtParams['AddDetectionClause'] = $detection.Clauses
+                Write-Info ("Detection: native {0} clause, {1} rule(s)." -f $app.DetectionMethod, $detection.Clauses.Count)
             }
-        }
 
-        # --------------------------------------------------------- collections
-        $targetCollections = @()
-        foreach ($collectionDefinition in $Config.collections) {
-            $collectionName = $collectionDefinition.namePattern.Replace('{App}', $appFullName)
-            $collection = Get-CMDeviceCollection -Name $collectionName -ErrorAction SilentlyContinue
+            if ($existingDt) {
+                # Detection clauses are only ever added, never replaced, and a clause
+                # that was created together with the deployment type cannot be
+                # removed again at all - Set-CMScriptDeploymentType reports it as
+                # "not found" and silently leaves it in place. Re-applying the same
+                # clauses on every publish therefore stacks another copy on top and
+                # the rule ends up referencing all of them.
+                # So the detection is compared first and only touched when it really
+                # differs. ScriptText has no such problem, it simply overwrites.
+                if ($dtParams.ContainsKey('AddDetectionClause')) {
+                    $stored = Get-DeploymentTypeDetection -DeploymentType $existingDt
 
-            if (-not $collection) {
-                try {
-                    $schedule = New-CMSchedule -RecurInterval Days -RecurCount 1
-                    $collection = New-CMDeviceCollection -Name $collectionName `
-                        -LimitingCollectionName $Config.limitingCollectionName `
-                        -RefreshType Periodic -RefreshSchedule $schedule -ErrorAction Stop
-                    Write-Ok "Collection created: $collectionName"
-
-                    $collectionFolder = Resolve-CMFolderPath -FolderPath $Config.collectionFolderPath -Config $Config -RootNode 'DeviceCollection'
-                    if ($collectionFolder -and (New-CMFolderPath -FolderPath $collectionFolder)) {
-                        try { $null = Move-CMObject -FolderPath $collectionFolder -InputObject $collection -ErrorAction Stop }
-                        catch { Write-Warn ("Could not move the collection: {0}" -f $_.Exception.Message) }
+                    if ($stored.Fingerprint -eq $detection.Fingerprint) {
+                        $dtParams.Remove('AddDetectionClause')
+                        Write-Info 'Detection unchanged - leaving it alone.'
+                    }
+                    else {
+                        $obsolete = @($stored.Clauses | ForEach-Object { $_.Setting.LogicalName } | Where-Object { $_ })
+                        if ($obsolete.Count -gt 0) { $dtParams['RemoveDetectionClause'] = $obsolete }
+                        Write-Warn ("Detection differs from the {0} rule(s) on the deployment type - replacing it." -f $stored.RuleCount)
                     }
                 }
-                catch { Write-Fail ("Collection [{0}]: {1}" -f $collectionName, $_.Exception.Message); continue }
-            }
-            else { Write-Info "Collection already exists: $collectionName" }
 
-            $targetCollections += [pscustomobject]@{
-                CollectionName   = $collectionName
-                DeployPurpose    = $collectionDefinition.deployPurpose
-                UserNotification = $collectionDefinition.userNotification
-            }
-        }
+                Write-Info 'Updating deployment type...'
+                $null = Set-CMScriptDeploymentType @dtParams
+                Write-Ok 'Deployment type updated.'
 
-        foreach ($globalDeployment in $Config.globalDeployments) {
-            $targetCollections += [pscustomobject]@{
-                CollectionName   = $globalDeployment.collectionName
-                DeployPurpose    = $globalDeployment.deployPurpose
-                UserNotification = $globalDeployment.userNotification
-            }
-        }
-
-        # --------------------------------------------------------- deployments
-        if ($Config.createDeployments) {
-            foreach ($target in $targetCollections) {
-                if (-not (Get-CMDeviceCollection -Name $target.CollectionName -ErrorAction SilentlyContinue)) {
-                    Write-Warn "Collection [$($target.CollectionName)] does not exist - skipping deployment."
-                    continue
+                # ConfigMgr accepts a removal it did not perform, so the result has
+                # to be checked rather than assumed.
+                if ($dtParams.ContainsKey('AddDetectionClause')) {
+                    $after = Get-DeploymentTypeDetection -DeploymentType (Get-CMDeploymentType -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName)
+                    if ($after.RuleCount -ne $detection.Clauses.Count) {
+                        Write-Fail ("Detection now has {0} rule(s) instead of {1}. ConfigMgr kept clauses it refuses to remove - correct the detection method of [{2}] in the console." -f $after.RuleCount, $detection.Clauses.Count, $deploymentTypeName)
+                    }
                 }
+            }
+            else {
+                Write-Info 'Creating deployment type...'
+                $null = Add-CMScriptDeploymentType @dtParams
+                Write-Ok "Deployment type created: $deploymentTypeName"
+            }
 
-                $existingDeployment = $null
-                try { $existingDeployment = Get-CMApplicationDeployment -Name $appFullName -CollectionName $target.CollectionName -ErrorAction SilentlyContinue } catch { }
-                if ($existingDeployment) {
-                    Write-Info "Deployment already exists: $($target.CollectionName)"
-                    continue
-                }
+            # ------------------------------------------------------------- content
+            # Start-CMContentDistribution assigns the content to a distribution
+            # target, Update-CMDistributionPoint only refreshes content that is
+            # already assigned. Which of the two applies does not follow from
+            # "the deployment type already existed": a package first published
+            # with distributeContent off has a deployment type but no content on
+            # any distribution point, and a refresh alone would never put it
+            # there - the deployments then fail with "There are no distribution
+            # points or distribution point groups in this application".
+            # So always try to assign first and fall back to a refresh when the
+            # content already sits on the target.
+            if ($Config.distributeContent) {
+                $distributionParams = @{ ApplicationName = $appFullName; ErrorAction = 'Stop' }
+                if ($Config.distributionPointGroupName) { $distributionParams['DistributionPointGroupName'] = $Config.distributionPointGroupName }
+                elseif ($Config.distributionPointName)  { $distributionParams['DistributionPointName']      = $Config.distributionPointName }
 
                 try {
-                    $null = New-CMApplicationDeployment -ApplicationName $appFullName `
-                        -CollectionName $target.CollectionName `
-                        -DeployAction Install `
-                        -DeployPurpose $target.DeployPurpose `
-                        -UserNotification $target.UserNotification `
-                        -ErrorAction Stop
-                    Write-Ok "Deployment created: $($target.DeployPurpose) -> $($target.CollectionName)"
+                    $null = Start-CMContentDistribution @distributionParams
+                    Write-Ok 'Content distribution started.'
                 }
-                catch { Write-Fail ("Deployment [{0}]: {1}" -f $target.CollectionName, $_.Exception.Message) }
+                catch {
+                    # Already distributed to this target - ConfigMgr reports
+                    # "No content destination was found. ... or if the content has
+                    # already been distributed to the specified destination."
+                    $distributionError = $_.Exception.Message
+                    try {
+                        $null = Update-CMDistributionPoint -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction Stop
+                        Write-Ok 'Content already distributed - update triggered on the distribution points.'
+                    }
+                    catch {
+                        Write-Warn ("Content distribution: {0}" -f $distributionError)
+                        Write-Warn ("Content update: {0}" -f $_.Exception.Message)
+                    }
+                }
+            }
+
+            # --------------------------------------------------------- collections
+            $targetCollections = @()
+            foreach ($collectionDefinition in $Config.collections) {
+                $collectionName = $collectionDefinition.namePattern.Replace('{App}', $appFullName)
+                $collection = Get-CMDeviceCollection -Name $collectionName -ErrorAction SilentlyContinue
+
+                if (-not $collection) {
+                    try {
+                        $schedule = New-CMSchedule -RecurInterval Days -RecurCount 1
+                        $collection = New-CMDeviceCollection -Name $collectionName `
+                            -LimitingCollectionName $Config.limitingCollectionName `
+                            -RefreshType Periodic -RefreshSchedule $schedule -ErrorAction Stop
+                        Write-Ok "Collection created: $collectionName"
+
+                        $collectionFolder = Resolve-CMFolderPath -FolderPath $Config.collectionFolderPath -Config $Config -RootNode 'DeviceCollection'
+                        if ($collectionFolder -and (New-CMFolderPath -FolderPath $collectionFolder)) {
+                            try { $null = Move-CMObject -FolderPath $collectionFolder -InputObject $collection -ErrorAction Stop }
+                            catch { Write-Warn ("Could not move the collection: {0}" -f $_.Exception.Message) }
+                        }
+                    }
+                    catch { Write-Fail ("Collection [{0}]: {1}" -f $collectionName, $_.Exception.Message); continue }
+                }
+                else { Write-Info "Collection already exists: $collectionName" }
+
+                $targetCollections += [pscustomobject]@{
+                    CollectionName   = $collectionName
+                    DeployPurpose    = $collectionDefinition.deployPurpose
+                    UserNotification = $collectionDefinition.userNotification
+                }
+            }
+
+            foreach ($globalDeployment in $Config.globalDeployments) {
+                $targetCollections += [pscustomobject]@{
+                    CollectionName   = $globalDeployment.collectionName
+                    DeployPurpose    = $globalDeployment.deployPurpose
+                    UserNotification = $globalDeployment.userNotification
+                }
+            }
+
+            # --------------------------------------------------------- deployments
+            if ($Config.createDeployments) {
+                foreach ($target in $targetCollections) {
+                    if (-not (Get-CMDeviceCollection -Name $target.CollectionName -ErrorAction SilentlyContinue)) {
+                        Write-Warn "Collection [$($target.CollectionName)] does not exist - skipping deployment."
+                        continue
+                    }
+
+                    $existingDeployment = $null
+                    try { $existingDeployment = Get-CMApplicationDeployment -Name $appFullName -CollectionName $target.CollectionName -ErrorAction SilentlyContinue } catch { }
+                    if ($existingDeployment) {
+                        Write-Info "Deployment already exists: $($target.CollectionName)"
+                        continue
+                    }
+
+                    try {
+                        $null = New-CMApplicationDeployment -ApplicationName $appFullName `
+                            -CollectionName $target.CollectionName `
+                            -DeployAction Install `
+                            -DeployPurpose $target.DeployPurpose `
+                            -UserNotification $target.UserNotification `
+                            -ErrorAction Stop
+                        Write-Ok "Deployment created: $($target.DeployPurpose) -> $($target.CollectionName)"
+                    }
+                    catch { Write-Fail ("Deployment [{0}]: {1}" -f $target.CollectionName, $_.Exception.Message) }
+                }
+            }
+
+            # -------------------------------------------------------- supersedence
+            if ($Config.supersedeOlderVersions) {
+                Add-CMApplicationSupersedenceForOlderVersions -AppFullName $appFullName -Name $metadata.name -Version $metadata.version -Config $Config
             }
         }
 
-        # -------------------------------------------------------- supersedence
-        if ($Config.supersedeOlderVersions) {
-            Add-CMApplicationSupersedenceForOlderVersions -AppFullName $appFullName -Name $metadata.name -Version $metadata.version -Config $Config
-        }
+        Write-Ok "Finished: $appFullName"
     }
-
-    Remove-Item -LiteralPath $artifact.Path -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Ok "Finished: $appFullName"
+    finally { Remove-Item -LiteralPath $artifact.Path -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 <#
