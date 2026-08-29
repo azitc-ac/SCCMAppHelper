@@ -338,7 +338,7 @@ it is the tool's own function in `Functions\setup.ps1`.
   call winget on the client and install whatever is current; the same is wanted here. Two
   things will need solving: winget in the **SYSTEM context** - `winget.exe` is a per user MSIX
   alias and is not on SYSTEM's PATH, so the real binary under
-  `C:Program FilesWindowsAppsMicrosoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe` has to be
+  `C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\` has to be
   resolved - and detection, which cannot compare a version it does not know in advance. That
   is exactly what `DetectionMethod = Script` is for.
 * `Registry`, `MSI` and `File` are all verified against the site. `Script` is the only
