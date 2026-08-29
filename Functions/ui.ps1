@@ -1111,3 +1111,126 @@ function Show-CatalogDialog {
 }
 
 #endregion
+#region ---------------------------------------------------------------- retire
+
+<#
+    Picks the applications to retire or remove, and which of the two it is.
+
+    The list is the site, not the share: an application whose package folder is
+    long gone still has to be reachable. "Only replaced versions" is the
+    everyday case - a version that has a newer sibling in the site.
+
+    Returns Applications / Level / DeletePackageFolder, or $null when cancelled.
+#>
+function Show-RetireDialog {
+    param($Inventory, [string]$Title = 'Retire applications')
+
+    $window = New-Object Windows.Window
+    $window.Title = $Title
+    $window.Width = 1000
+    $window.Height = 640
+    $window.WindowStartupLocation = 'CenterScreen'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($window, 'RetireDialog')
+
+    $grid = New-Object Windows.Controls.Grid
+    $grid.Margin = '12'
+    foreach ($height in 'Auto', '*', 'Auto', 'Auto') {
+        $row = New-Object Windows.Controls.RowDefinition
+        $row.Height = $(if ($height -eq '*') { New-Object Windows.GridLength -ArgumentList 1, ([Windows.GridUnitType]::Star) } else { [Windows.GridLength]::Auto })
+        $null = $grid.RowDefinitions.Add($row)
+    }
+
+    $filterBox = New-Object Windows.Controls.CheckBox
+    $filterBox.Content = 'Only versions that have a newer one in the site'
+    $filterBox.Margin = '0,0,0,8'
+    $filterBox.IsChecked = $true
+    [Windows.Automation.AutomationProperties]::SetAutomationId($filterBox, 'OnlyReplaced')
+    [Windows.Controls.Grid]::SetRow($filterBox, 0)
+    $null = $grid.Children.Add($filterBox)
+
+    $dataGrid = New-Object Windows.Controls.DataGrid
+    $dataGrid.AutoGenerateColumns = $false
+    $dataGrid.IsReadOnly = $true
+    $dataGrid.SelectionMode = 'Extended'
+    $dataGrid.SelectionUnit = 'FullRow'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($dataGrid, 'RetireGrid')
+    foreach ($column in @(
+            @{ Header = 'Application';   Binding = 'AppName';          Width = 380 },
+            @{ Header = 'Deployments';   Binding = 'Deployments';      Width = 90  },
+            @{ Header = 'Superseded by'; Binding = 'SupersededByText'; Width = 300 },
+            @{ Header = 'Published by';  Binding = 'Origin';           Width = 100 })) {
+        $col = New-Object Windows.Controls.DataGridTextColumn
+        $col.Header = $column.Header
+        $col.Binding = New-Object Windows.Data.Binding($column.Binding)
+        $col.Width = $column.Width
+        $null = $dataGrid.Columns.Add($col)
+    }
+    [Windows.Controls.Grid]::SetRow($dataGrid, 1)
+    $null = $grid.Children.Add($dataGrid)
+
+    foreach ($application in $Inventory) {
+        Add-Member -InputObject $application -NotePropertyName 'SupersededByText' `
+            -NotePropertyValue (@($application.SupersededBy) -join ', ') -Force
+    }
+    $applyFilter = { $dataGrid.ItemsSource = @($Inventory | Where-Object { -not $filterBox.IsChecked -or $_.HasNewer }) }
+    & $applyFilter
+    $filterBox.Add_Checked($applyFilter)
+    $filterBox.Add_Unchecked($applyFilter)
+
+    $folderBox = New-Object Windows.Controls.CheckBox
+    $folderBox.Content = 'Remove: delete the package folder on the share as well'
+    $folderBox.Margin = '0,10,0,0'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($folderBox, 'DeletePackageFolder')
+    [Windows.Controls.Grid]::SetRow($folderBox, 2)
+    $null = $grid.Children.Add($folderBox)
+
+    $buttons = New-Object Windows.Controls.StackPanel
+    $buttons.Orientation = 'Horizontal'
+    $buttons.HorizontalAlignment = 'Right'
+    $buttons.Margin = '0,12,0,0'
+    [Windows.Controls.Grid]::SetRow($buttons, 3)
+    $null = $grid.Children.Add($buttons)
+
+    $retireButton = New-Object Windows.Controls.Button
+    $retireButton.Content = 'Retire (deployments only)'
+    $retireButton.Padding = '16,6'; $retireButton.Margin = '0,0,8,0'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($retireButton, 'Retire')
+
+    $removeButton = New-Object Windows.Controls.Button
+    $removeButton.Content = 'Remove (delete everything)'
+    $removeButton.Padding = '16,6'; $removeButton.Margin = '0,0,8,0'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($removeButton, 'Remove')
+
+    $cancelButton = New-Object Windows.Controls.Button
+    $cancelButton.Content = 'Cancel'
+    $cancelButton.Padding = '16,6'; $cancelButton.IsCancel = $true
+    [Windows.Automation.AutomationProperties]::SetAutomationId($cancelButton, 'Cancel')
+
+    $null = $buttons.Children.Add($retireButton)
+    $null = $buttons.Children.Add($removeButton)
+    $null = $buttons.Children.Add($cancelButton)
+
+    $choose = {
+        param($level)
+        $selected = @($dataGrid.SelectedItems | Where-Object { $_ -isnot [int] })
+        if ($selected.Count -eq 0) {
+            $null = Show-MessageDialog -Text 'Nothing selected.' -Caption $Title -Buttons 'OK' -Icon 'Information' -Owner $window
+            return
+        }
+        $window.Tag = [pscustomobject]@{
+            Applications        = $selected
+            Level               = $level
+            DeletePackageFolder = [bool]$folderBox.IsChecked
+        }
+        $window.Close()
+    }
+    $retireButton.Add_Click({ & $choose 'Retire' })
+    $removeButton.Add_Click({ & $choose 'Remove' })
+
+    $window.Content = $grid
+    $window.Tag = $null
+    $null = $window.ShowDialog()
+    return $window.Tag
+}
+
+#endregion
