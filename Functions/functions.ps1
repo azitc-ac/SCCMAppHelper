@@ -17,6 +17,7 @@ if (-not $toolVersion) { $toolVersion = '1.0' }
 . "$rootDir\Functions\ui.ps1"
 . "$rootDir\Functions\setup.ps1"
 . "$rootDir\Functions\catalog.ps1"
+. "$rootDir\Functions\retire.ps1"
 
 #region --------------------------------------------------------------- output
 
@@ -1977,6 +1978,7 @@ function Show-ToolsMenu {
         [pscustomobject]@{ Tool = 'Update collections';            Description = 'Trigger a membership update for all configured collection patterns.' }
         [pscustomobject]@{ Tool = 'Rebuild outdated apps';         Description = 'Refill the collection of clients running an outdated version.' }
         [pscustomobject]@{ Tool = 'Role collection membership';    Description = 'Add or remove a role collection in the application collections.' }
+        [pscustomobject]@{ Tool = 'Retire applications';           Description = 'Stop deploying a version, or delete it and everything that belongs to it.' }
         [pscustomobject]@{ Tool = 'Switch ConfigMgr site';         Description = 'Work against a different site of the "sites" list in config.json.' }
         [pscustomobject]@{ Tool = 'Add ConfigMgr site';            Description = 'Setup assistant: connect to a server and read its settings automatically.' }
         [pscustomobject]@{ Tool = 'Check site configuration';      Description = 'Test provider, share, console module, SQL and collections of the active site.' }
@@ -1990,6 +1992,7 @@ function Show-ToolsMenu {
         'Update collections'         { Update-AppCollections }
         'Rebuild outdated apps'      { Update-OutdatedAppsCollection }
         'Role collection membership' { Edit-RoleCollectionMembership }
+        'Retire applications'        { retireApps }
         'Switch ConfigMgr site'      { $null = Get-ActiveConfig -ForceSiteSelection }
         'Add ConfigMgr site'         { $null = Start-SetupWizard }
         'Check site configuration'   { $null = Test-SiteConfiguration }
