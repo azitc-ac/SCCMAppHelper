@@ -229,11 +229,36 @@ function Get-CatalogManifestPath {
     return ('manifests/{0}/{1}' -f $first, (($PackageIdentifier -split '\.') -join '/'))
 }
 
+<#
+    A directory listing, in full.
+
+    The contents API returns at most 100 entries a page and simply stops there -
+    no error, no marker. `manifests/m` alone holds well over a thousand
+    publishers, so a single request would silently describe a fraction of the
+    tree and every search over it would quietly miss things.
+#>
 function Get-CatalogDirectory {
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    $uri = 'https://api.github.com/repos/{0}/contents/{1}?ref={2}' -f $script:CatalogRepository, $Path, $script:CatalogBranch
-    return (Invoke-CatalogRequest -Uri $uri | ConvertFrom-Json)
+    $entries = @()
+    $page    = 1
+
+    while ($true) {
+        $uri = 'https://api.github.com/repos/{0}/contents/{1}?ref={2}&per_page=100&page={3}' -f
+                   $script:CatalogRepository, $Path, $script:CatalogBranch, $page
+        $batch = @(Invoke-CatalogRequest -Uri $uri | ConvertFrom-Json)
+
+        $entries += $batch
+        if ($batch.Count -lt 100) { break }
+
+        $page++
+        if ($page -gt 50) {
+            Write-Warn "Directory [$Path] has more than 5000 entries - the listing was cut short."
+            break
+        }
+    }
+
+    return $entries
 }
 
 <#
@@ -523,10 +548,18 @@ function Get-CatalogList {
 }
 
 <#
-    Searches the manifest repository by walking its folders: the first character
-    of the identifier is the top level, below it publishers, below those the
-    packages. That is one API call per level, which matters - unauthenticated
-    GitHub allows 60 an hour.
+    Searches the manifest repository by walking its folders.
+
+    Know what this can and cannot do. The repository is organised by
+    **publisher**: `manifests/<first character of the identifier>/<Publisher>/<Package>`.
+    So a query is matched against publishers first, and only their packages are
+    looked at. Searching for a product whose vendor is named differently does
+    not work - "filezilla" never finds it, because the identifier starts with
+    the vendor. Paste the full package id (it contains a dot) and it is resolved
+    directly instead.
+
+    Walking the whole tree is not an option: unauthenticated GitHub allows 60
+    requests an hour and there are tens of thousands of publishers.
 #>
 function Find-CatalogPackage {
     param(
@@ -536,6 +569,12 @@ function Find-CatalogPackage {
 
     $query = $Query.Trim()
     if ($query.Length -lt 2) { throw 'Please search for at least two characters.' }
+
+    # A full package id needs no searching.
+    if ($query -match '^[^\s]+\.[^\s]+$') {
+        $null = Get-CatalogPackageVersion -PackageIdentifier $query
+        return @([pscustomobject]@{ Name = ($query -split '\.')[-1]; PackageId = $query; Description = '' })
+    }
 
     $letter     = $query.Substring(0, 1).ToLowerInvariant()
     $publishers = @(Get-CatalogDirectory -Path ('manifests/{0}' -f $letter) |
@@ -570,33 +609,33 @@ function Find-CatalogPackage {
 #region ----------------------------------------------------------- the workflow
 
 <#
-    New from catalog: pick a package, resolve its newest version, download it
-    after an explicit confirmation, read what it says about itself and put the
-    finished row into Apps.csv. Package creation and publishing stay where they
-    are - the existing tiles pick it up from there.
+    Everything from picking a package to a finished Apps.csv record: resolve the
+    newest version, confirm, download, check the hash against the manifest and
+    read what the installer says about itself.
+
+    Nothing is written here. The record is handed back and the record editor
+    fills its fields with it, exactly as "From MSI..." and "From EXE..." do -
+    the catalog is a third source for the same record, not a workflow of its
+    own. Returns $null when the user backs out at any point.
 #>
-function newFromCatalog {
-    $config = Get-ActiveConfig
-    $csvPath = Join-Path $rootDir 'Apps.csv'
-    Update-AppListSchema -CsvPath $csvPath
+function Read-CatalogPackage {
+    param($Config = (Get-ActiveConfig))
 
     $selection = Show-CatalogDialog -Packages (Get-CatalogList)
-    if (-not $selection) { Write-Info 'Cancelled.'; return }
+    if (-not $selection) { Write-Info 'Cancelled.'; return $null }
 
     Write-Step "Catalog: $($selection.PackageId)"
 
-    $versions = Get-CatalogPackageVersion -PackageIdentifier $selection.PackageId
-    $latest   = $versions[0]
+    $latest = (Get-CatalogPackageVersion -PackageIdentifier $selection.PackageId)[0]
     Write-Ok "Newest version in the repository: $latest"
 
-    $known = Get-AppListRow -Name $selection.Name -Version $latest
-    $rows  = @(Import-Csv -LiteralPath $csvPath -Delimiter ';' | Where-Object { $_.Name -eq $selection.Name })
-    if ($rows.Count -gt 0) {
-        Write-Info ("Already in the app list: {0}" -f (($rows | ForEach-Object { $_.Version }) -join ', '))
-    }
-    if ($known) {
-        $answer = Show-MessageDialog -Text "$($selection.Name) $latest is already in Apps.csv.`n`nDownload it anyway?" -Caption 'Already known' -Buttons 'YesNo' -Icon 'Question'
-        if ($answer -ne 'Yes') { Write-Info 'Cancelled.'; return }
+    # Get-AppListRow wants a version; here every version of the product is
+    # interesting, so the list is read directly.
+    $csvPath = Join-Path $rootDir 'Apps.csv'
+    Update-AppListSchema -CsvPath $csvPath
+    $known = @(Import-Csv -LiteralPath $csvPath -Delimiter ';' | Where-Object { $_.Name.Trim() -eq $selection.Name.Trim() })
+    if ($known.Count -gt 0) {
+        Write-Info ("Already in the app list: {0}" -f (($known | ForEach-Object { $_.Version }) -join ', '))
     }
 
     $manifest   = Get-CatalogManifest -PackageIdentifier $selection.PackageId -Version $latest
@@ -607,14 +646,18 @@ function newFromCatalog {
         $picked = Open-SelectDialog -title 'Which installer?' -data (
             $installers | Select-Object Architecture, InstallerType, InstallerUrl, Sha256)
         if ($null -ne $picked) { $picked = $picked | Where-Object { $_ -isnot [int] } | Select-Object -First 1 }
-        if (-not $picked) { Write-Info 'Cancelled.'; return }
+        if (-not $picked) { Write-Info 'Cancelled.'; return $null }
         $installer = $installers | Where-Object { $_.InstallerUrl -eq $picked.InstallerUrl } | Select-Object -First 1
     }
 
-    $downloadRoot = Join-Path (Get-PackageWorkRoot -Config $config) ('_DL\{0} - {1}' -f $manifest.PackageName, $manifest.PackageVersion)
+    $downloadRoot = Join-Path (Get-PackageWorkRoot -Config $Config) ('_DL\{0} - {1}' -f $manifest.PackageName, $manifest.PackageVersion)
 
-    $answer = Show-MessageDialog -Text ("Download this installer?`n`n{0} {1}`n{2} / {3}`n`n{4}`n`nSHA256 {5}`n`nInto:`n{6}" -f $manifest.PackageName, $manifest.PackageVersion, $installer.Architecture, $installer.InstallerType, $installer.InstallerUrl, $installer.Sha256, $downloadRoot) -Caption 'New from catalog' -Buttons 'YesNo' -Icon 'Question'
-    if ($answer -ne 'Yes') { Write-Info 'Cancelled - nothing was downloaded.'; return }
+    $answer = Show-MessageDialog -Text ("Download this installer?`n`n{0} {1}`n{2} / {3}`n`n{4}`n`nSHA256 {5}`n`nInto:`n{6}" -f
+                    $manifest.PackageName, $manifest.PackageVersion,
+                    $installer.Architecture, $installer.InstallerType,
+                    $installer.InstallerUrl, $installer.Sha256, $downloadRoot) `
+                -Caption 'From catalog' -Buttons 'YesNo' -Icon 'Question'
+    if ($answer -ne 'Yes') { Write-Info 'Cancelled - nothing was downloaded.'; return $null }
 
     $file     = Save-CatalogInstaller -Url $installer.InstallerUrl -Destination $downloadRoot -Sha256 $installer.Sha256
     $evidence = Get-CatalogInstallerEvidence -Path $file
@@ -631,33 +674,11 @@ function newFromCatalog {
         Write-Warn 'No uninstall key could be derived - fill in DetectionPattern before publishing.'
     }
 
-    # Nothing is written before a human has looked at it.
-    $answer = Open-EditDialog -title "New from catalog: $($manifest.PackageIdentifier)" `
-        -PropertyOrder $script:AppListColumns -item ([ordered]@{
-            Publisher        = $row.Publisher
-            Name             = $row.Name
-            Version          = $row.Version
-            DetectionMethod  = $row.DetectionMethod
-            DetectionPattern = $row.DetectionPattern
-            ProductCode      = $row.ProductCode
-            InstallCmd       = $row.InstallCmd
-            UninstallCmd     = $row.UninstallCmd
-            Notes            = $row.Notes
-        })
-    $answer = $answer | Where-Object { $_ -isnot [int] }
-    if (-not $answer) { Write-Info "Cancelled - the installer stays in $downloadRoot."; return }
-    foreach ($key in $answer.Keys) { $row.$key = $answer[$key] }
-
-    if (Get-AppListRow -Name $row.Name -Version $row.Version) {
-        Write-Info 'That name and version is already in the app list - leaving it as it is.'
+    return [pscustomobject]@{
+        Row       = $row
+        File      = $file
+        Signature = $evidence.SignatureStatus
     }
-    else {
-        Add-AppListRow -App $row
-    }
-
-    Write-Ok ("Ready: {0} - {1}" -f $row.Name, $row.Version)
-    Write-Info "Installer: $file"
-    $null = Show-MessageDialog -Text ("{0} - {1} is in Apps.csv.`n`nThe installer is here:`n{2}`n`nCreate packages picks it up from there - copy it into .\Files when the packaging assistant opens Explorer." -f $row.Name, $row.Version, $file) -Caption 'New from catalog' -Buttons 'OK' -Icon 'Information'
 }
 
 #endregion

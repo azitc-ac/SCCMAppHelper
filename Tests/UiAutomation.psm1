@@ -95,4 +95,29 @@ function Get-UiaElement {
     return @($Root.FindAll([Windows.Automation.TreeScope]::Descendants, $condition))
 }
 
-Export-ModuleMember -Function Wait-UiaWindow, Find-UiaElement, Invoke-UiaElement, Set-UiaText, Get-UiaElement
+<#
+    Selects a row of a DataGrid. The row is addressed by the text its automation
+    name carries - a WPF DataGrid names a row after the object behind it, so
+    "7-Zip" is enough to find the 7-Zip row without counting positions.
+#>
+function Select-UiaRow {
+    param(
+        [Parameter(Mandatory = $true)]$Root,
+        [Parameter(Mandatory = $true)][string]$Match,
+        [int]$TimeoutSeconds = 20
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        foreach ($row in (Get-UiaElement -Root $Root -ControlType DataItem)) {
+            if ($row.Current.Name -like "*$Match*") {
+                $row.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                return $row
+            }
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    return $null
+}
+
+Export-ModuleMember -Function Wait-UiaWindow, Find-UiaElement, Invoke-UiaElement, Set-UiaText, Get-UiaElement, Select-UiaRow

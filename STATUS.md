@@ -248,6 +248,37 @@ right rather than test scaffolding:
 The record editor was rebuilt at the same time: label and value share a row instead of
 stacking, which is what made a nine column record run past the bottom of the screen.
 
+### The catalog is a record source, not a tile (2026-08-29)
+
+**New from catalog** was a fifth tile on the start menu. It sat at the wrong level: the other
+tiles run a workflow over a selection, while the catalog produces one row of the master list -
+which is what `New`, `Duplicate` and `Edit` already do. It is now **From catalog...** in the
+record editor, the third button next to **From MSI...** and **From EXE...**, and the three are
+the same pattern: three sources, one record. `Read-CatalogPackage` returns the record and
+writes nothing; the editor's OK does the writing, like it does for every other row. As a side
+effect the catalog can now lift an existing row onto a newer version, which the tile could not.
+
+`Tests\Test-Dialogs.ps1` runs the whole thing, download included: 55 assertions, all passing.
+Picking PuTTY writes `Simon Tatham / PuTTY / 0.84.0.0 / MSI /
+{FEE89B49-1A47-476C-864C-1D5076FC2891}` into `Apps.csv` and leaves the MSI in
+`_DL\PuTTY - 0.84.0.0\`.
+
+**19 of the 20 catalog ids were checked against the repository and resolve.** The twentieth,
+`TimKosse.FileZilla.Client`, was guessed and does not exist - there is no such publisher under
+`manifests/t`, and nothing FileZilla shaped under `manifests/f` either. The entry was removed
+rather than guessed at again.
+
+Two defects in the catalog came out of looking for it:
+
+* `Get-CatalogDirectory` read one page. The contents API returns at most 100 entries and then
+  simply stops - no error, no marker - so any listing of a busy letter described a fraction of
+  the tree and every search over it quietly missed things. It pages through now.
+* The search can only ever match publishers, because that is how the repository is organised.
+  Searching for a product whose vendor is named differently cannot work by walking the tree,
+  and walking all of it is out of the question at 60 requests an hour. A query that looks like
+  a package id is now resolved directly instead, and the limitation is written down in both
+  the function and the README rather than left to be rediscovered.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -302,6 +333,14 @@ it is the tool's own function in `Functions\setup.ps1`.
 * `catalog.json` holds 20 package ids and only `7zip.7zip` and `Notepad++.Notepad++` were
   confirmed against the repository. A wrong id fails with "Not found in the manifest
   repository" and is a one line fix, but they are not verified.
+* **A pure winget path is missing.** Everything here downloads a fixed version and deploys it
+  the traditional way. `IntuneWin32Helper` can also build version independent packages that
+  call winget on the client and install whatever is current; the same is wanted here. Two
+  things will need solving: winget in the **SYSTEM context** - `winget.exe` is a per user MSIX
+  alias and is not on SYSTEM's PATH, so the real binary under
+  `C:Program FilesWindowsAppsMicrosoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe` has to be
+  resolved - and detection, which cannot compare a version it does not know in advance. That
+  is exactly what `DetectionMethod = Script` is for.
 * `Registry`, `MSI` and `File` are all verified against the site. `Script` is the only
   detection method that has not been run since the rewrite - what is untested there is the
   `CustomSource` branch reading `Content\SupportFiles\detection.ps1` and the signature header
