@@ -279,6 +279,39 @@ Two defects in the catalog came out of looking for it:
   a package id is now resolved directly instead, and the limitation is written down in both
   the function and the README rather than left to be rediscovered.
 
+### Publishing what the older scripts built (AZI, 2026-08-29)
+
+The case that had been open longest, and it paid: three defects, none of them
+reachable without a real legacy package in a real site.
+
+* **The detection fingerprint ignored the operator.** A foreign clause comparing
+  `ProductVersion Equals 11.24.0` looked identical to ours comparing `GreaterEquals
+  11.24.0`, so the tool left the foreign detection alone and reported success. The two do not
+  mean the same thing - `Equals` stops counting the product as installed the moment it is
+  updated. Found on `PDF24 Creator - 11.24.0`, which is exactly that case.
+* **The artifact folder leaked.** Cleanup sat after the publish block, so every refused package
+  left a `SCCMAppHelper_<guid>` folder under `%TEMP%`. It is a `finally` now.
+* **Legacy rows carry an empty `DetectionPattern`**, which used to mean "DisplayName like
+  `<Name>*`". A native clause needs an exact key, so none of them could be published without
+  filling one in by hand. Where the package ships a single MSI the ProductCode answers the
+  question - it *is* the uninstall key of an MSI installed product - and that covers most of
+  them.
+
+What the run proved:
+
+* `PDF24 Creator - 11.24.0`: foreign `Equals` clause replaced by ours, 1 setting and 1 rule
+  reference before and after, `GreaterEquals` afterwards, `Detection unchanged` on the next
+  run, nothing left in `%TEMP%`. The deployment type comment now carries the signature, so it
+  reads as `Published (this tool)`.
+* `7-Zip - 24.9.0.0` ships no MSI and its row holds no key: refused with a message saying so,
+  and the deployment type was not touched at all - same setting count, comment still empty.
+  A pattern still carrying a wildcard is refused the same way, because a native clause would
+  take it without complaint and then match nothing.
+
+That is also the third data point on replacing clauses: it worked here, it worked on
+Notepad++, and it failed in the `4.0.0` experiment. Still no explanation for the difference,
+which is why the tool verifies the rule count afterwards rather than trusting the call.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -344,11 +377,10 @@ it is the tool's own function in `Functions\setup.ps1`.
   observed *evaluating*. What is verified is the clause ConfigMgr stores, not that it matches
   the product once it is on a machine. The `Is64Bit` bug is the reminder: the clause looked
   right and would still have found nothing.
-* Publishing a package built with the older scripts (`Published (foreign)`) was not tried,
-  because each of them belongs to an application that already exists in the site. That is now
-  the interesting case: such an application has a script or clause detection the tool did not
-  write, and the clause replacement is exactly what cannot be done reliably. Expect the
-  "Detection differs" warning and the verification afterwards to fire.
+* The legacy packages whose CM application uses **script** detection rather than clauses were
+  not tried - `Google Chrome`, `Microsoft Edge`, the Office packages and others. Replacing a
+  script detection with a clause is a different operation from replacing a clause, and it has
+  not been exercised.
 
 ## Open items
 
