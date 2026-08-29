@@ -46,7 +46,6 @@ The start dialog offers:
 | **Create packages** | Creates PSADT packages for the selected rows of `Apps.csv` |
 | **Create and publish** | Same, and publishes each package as a ConfigMgr application |
 | **Publish packages** | Publishes existing packages (again) |
-| **New from catalog** | Downloads an installer from the winget-pkgs manifests and adds it to `Apps.csv` |
 | **Tools** | Collection maintenance helpers |
 
 The gear icon opens the settings editor for `Config\config.json`.
@@ -78,15 +77,23 @@ buttons:
 * **From MSI...** reads ProductName, ProductVersion, Manufacturer and ProductCode from an
   MSI and switches the detection to `MSI`.
 * **From EXE...** reads the version resource of a setup EXE.
+* **From catalog...** picks the file first - see below - and then reads it the same way.
 
 That replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
 
-## New from catalog
+## From catalog
 
-Fetches the usual suspects without hunting for a download link. The source is the manifest
+The third prefill source in the record editor, next to **From MSI...** and **From EXE...**:
+where those read a file you picked, this one finds the file first. Fetches the usual suspects
+without hunting for a download link. The source is the manifest
 repository behind winget, [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs),
 read directly over HTTPS - the `winget` client itself is **not** used, because it is a per
 user MSIX and is missing on Windows Server 2022.
+
+Searching it has one limitation worth knowing: the repository is keyed by **publisher**
+(`manifests/<letter>/<Publisher>/<Package>`), so a query is matched against publishers. A
+product whose vendor is named differently will not be found by its product name - paste the
+full package id instead, and it is resolved directly.
 
 1. **Pick** from `Config\catalog.json`, or search the repository for anything else.
 2. **Resolve** the newest version, and say which versions of it `Apps.csv` already holds.
@@ -96,7 +103,8 @@ user MSIX and is missing on Windows Server 2022.
    manifest. A file that does not match is deleted.
 5. **Read** the file the same way the **From MSI...** button does, and report its Authenticode
    signer.
-6. **Check** the finished row in the usual editor, then it goes into `Apps.csv`.
+6. **Fill in** the record you already have open - publisher, name, version, detection method
+   and ProductCode - and leave the rest to `OK`.
 
 Where a manifest offers several installers, an MSI wins over an EXE: it carries a ProductCode,
 which means native detection and PSADT's zero-config MSI deployment, so nothing has to be
@@ -104,9 +112,11 @@ maintained by hand. For an EXE the uninstall key comes from `AppsAndFeaturesEntr
 manifest - for 7-Zip that is literally `7-Zip`, which is exactly what `DetectionPattern`
 wants.
 
-The flow deliberately stops there. Packaging and publishing stay with **Create packages** and
-**Publish packages**; the download waits in `_DL` under the same `<Name> - <Version>` name the
-package folder will have.
+It is a record source, not a workflow of its own - which is why it sits in the editor rather
+on the start menu. That also means it can lift an **existing** row onto a newer version, not
+just create one. The download waits in `_DL` under the same `<Name> - <Version>` name the
+package folder will have; packaging and publishing stay with **Create packages** and
+**Publish packages**.
 
 Nothing that is downloaded is ever executed. GitHub allows 60 unauthenticated API requests an
 hour, which is why the curated list stores the package id - resolving a version from it costs

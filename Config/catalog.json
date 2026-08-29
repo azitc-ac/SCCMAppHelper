@@ -10,7 +10,6 @@
         { "name": "PDF24 Creator",             "packageId": "geeksoftwareGmbH.PDF24Creator" },
         { "name": "WinSCP",                    "packageId": "WinSCP.WinSCP" },
         { "name": "PuTTY",                     "packageId": "PuTTY.PuTTY" },
-        { "name": "FileZilla Client",          "packageId": "TimKosse.FileZilla.Client" },
         { "name": "Git",                       "packageId": "Git.Git" },
         { "name": "Greenshot",                 "packageId": "Greenshot.Greenshot" },
         { "name": "KeePass",                   "packageId": "DominikReichl.KeePass" },
