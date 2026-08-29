@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-08-29 (the dialogs driven through UI Automation)
+Last updated: 2026-08-29 (retire workflow, lab cleaned)
 
 ## Where it stands
 
@@ -312,6 +312,39 @@ That is also the third data point on replacing clauses: it worked here, it worke
 Notepad++, and it failed in the `4.0.0` experiment. Still no explanation for the difference,
 which is why the tool verifies the rule count afterwards rather than trusting the call.
 
+### The retire workflow, built and run (AZI, 2026-08-29)
+
+Two levels. **Retire** removes the deployments and nothing else - application, collections,
+content and supersedence all stay, and publishing again undoes it. **Remove** goes on to
+dissolve the supersedence references, revoke the content, delete the two per-application
+collections and finally the application; the package folder is optional. It lives in the tools
+menu, not on the start dialog. `Apps.csv` is never touched at either level.
+
+Run against the lab, which is now free of `SCCMAppHelper Testapp`: no applications, no
+collections, no package folders. The five `Apps.csv` rows are still there, by design.
+
+**Three defects the first run turned up**, one of which did damage:
+
+* **Collections were derived from the deployments.** A collection with no deployment was
+  therefore invisible, and `Remove` deleted nothing - which is exactly the state a `Retire`
+  leaves behind, and the state `createDeployments = false` produces. They come from the
+  configured name patterns now.
+* **`Remove-CMContentDistribution` refuses to work from `-ApplicationName` alone.** It wants to
+  be told which distribution point or group, like `Start-CMContentDistribution` does.
+* **Dissolving a supersedence failed and the application was deleted anyway.** ConfigMgr does
+  not enforce this: it deleted an application that four others supersede and left them pointing
+  at something that no longer exists. Nothing can clean that up afterwards, because removing a
+  supersedence needs the deployment type that was just deleted. `SCCMAppHelper Testapp - 5.0.0`
+  carried two such orphaned rules until it was itself deleted. An application whose referrers
+  cannot be dissolved is now left alone and reported, and the package folder stays as long as
+  the application does.
+
+**`Set-CMApplicationSupersedence -RemoveSupersedence` does not work.** It answers "object
+reference not set to an instance of an object" in both parameter sets, by name and by object.
+`Remove-CMDeploymentTypeSupersedence` does the job but warns that it is deprecated and points
+at exactly that broken replacement. The tool keeps the deprecated cmdlet and suppresses the
+warning; do not "fix" this without testing the replacement first.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -384,17 +417,13 @@ it is the tool's own function in `Functions\setup.ps1`.
 
 ## Open items
 
-* **Retire workflow** - removing an outdated application version from ConfigMgr cleanly:
-  application, its `ins-req-dev-*` / `ins-avl-dev-*` collections, its deployments and
-  optionally the package folder. Deliberately left out because it is destructive. When
-  building it, mirror `deployApps`: select from the existing applications, show exactly what
-  will be deleted, confirm before removing anything.
-* **Clean up the lab.** `SCCMAppHelper Testapp` in `1.0.0`, `2.0.0`, `3.0.0`, `4.0.0` and
-  `5.0.0`, their `ins-*` collections, the deployments of 1.0.0 and 2.0.0, the five `Apps.csv`
-  rows and the five package folders under `C:\Sources\Applications` are still on AZI - they
-  are the evidence for the runs above. Removing them is exactly the case the retire workflow
-  is for. Note that `3.0.0` (14 rules) and `4.0.0` (4 rules) carry deliberately stacked
-  detection from the clause experiments; `5.0.0` is the clean one.
+* **The lab is clean of `SCCMAppHelper Testapp`** - no applications, no collections, no package
+  folders. The five `Apps.csv` rows are still there, which is what the workflow promises. They
+  can go by hand whenever they are in the way.
+* **A collection can outlive its application, and the retire workflow cannot see it then.**
+  Selection is from the site's applications, so a collection whose application is already gone
+  is unreachable. Four of them were left behind by the collection bug above and had to be
+  deleted separately. Worth a small "orphaned collections" cleanup in the tools menu.
 * **`Notepad++ - 8.9.8` is real too**, same situation as 7-Zip below: application, two `ins-*`
   collections, package, `Apps.csv` row and the download in `_DL\Notepad++ - 8.9.8\`. No content,
   no deployment. The site had no Notepad++ before, so nothing is superseded.
