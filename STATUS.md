@@ -12,6 +12,10 @@ Version 1.0, feature complete for the intended workflow: master list -> PSADT pa
 ConfigMgr application including collections, deployments, content distribution and
 supersedence, plus a setup assistant and the collection maintenance tools.
 
+As of 2026-08-31 the whole chain has been walked end to end on a real client: five
+applications built from the master list, published, deployed to `rd3` and installed there,
+with supersedence retiring the versions they replace.
+
 The tool was written from scratch on 2026-08-27/28 as the ConfigMgr counterpart to
 `IntuneWin32Helper`, replacing the older scripts under `Powershell\SCCM`
 (`create-AppsInCM.ps1`, `add-NewMSIToAppsCSV.ps1`, `create-CollForOutdatedApps.ps1`,
@@ -433,8 +437,93 @@ hand.
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
+### Five applications deployed to a client, and what stood in the way (rd3, 2026-08-31)
+
+Five applications were built with the tool, published, and deployed to `rd3`. All five are
+installed and ConfigMgr agrees:
+
+```
+7-Zip                    26.02         Installed
+PDF24 Creator            11.30.1       Installed   (11.24.0 and 11.29.1 NotInstalled)
+Notepad++                8.9.8         Installed
+Remote Desktop Manager   2026.2.18.0   Installed   (2025.1.25.0 NotInstalled)
+SQL Server Mgmt Studio   22.9.2        Installed
+```
+
+The superseded versions report themselves as not installed, which is the supersedence chain
+working the way it is supposed to.
+
+Getting the last one there took most of an evening, because **four independent faults were
+stacked on top of each other** and each one hid the next. Written down because the shape of
+this is worth recognising again:
+
+1. **The install command carried the wrong verb.** `vs_SSMS.exe` is a Visual Studio
+   bootstrapper. Without a verb it performs `install`, and it refuses that over an existing
+   instance in the same install path - exit 1 after 30 seconds, no `dd_*.log`, nothing in
+   `AppEnforce` beyond the code. `rd3` already carried SSMS 22.3 in that path. A version change
+   is `update`, so the package now asks `vswhere` what is there and picks the verb.
+2. **The distribution point silently stopped accepting content.** It sat on source version 4
+   from 18:12 while the deployment type had moved on to content version 7. Status message 2361,
+   "gave up after 30 retries". Every correction after that reached the site and stopped there;
+   the client kept running the old script from its cache. Re-triggering the distribution fixed
+   it - the failure was transient, not structural. Path length was measured and ruled out: the
+   longest UNC path in the package is 259 characters and every file opens.
+3. **The client was a policy revision behind.** Revision 9 against CIVersion 11, so it kept
+   asking for the previous content object.
+4. **The client cache was full.** `Not enough space in Cache`, `CreateContentRequest failed`.
+   Three identical 5.1 GB copies of the same package occupied 15.3 GB of a 20 GB cache under
+   three different content IDs. That is the tool's own fault and is the finding worth keeping -
+   see the `Update-CMDistributionPoint` entry below.
+
+The lesson that cost the time: **check that what you publish actually arrives before correcting
+the source again.** Three rounds of fixing the package went into a transport that was not
+moving. Nothing in the console said so - source, application and deployment all looked correct.
+
+Two more things surfaced on the way:
+
+* **The tool redirects PSADT's log path.** `Set-ADTLogPath` rewrites `LogPath` in the package
+  config to `C:\Windows\CCM\Logs\PSADT`. Logs are not in `C:\Windows\Logs\Software`, and
+  looking for them there wastes time.
+* **The installer can crash after succeeding.** The final SSMS run updated 22.3 to 22.9.2
+  correctly and then died in its own post-install step - `ngen.exe` with `0xc00000fd`, a stack
+  overflow, and `setup.exe_Visual Studio` faulting in `ntdll.dll`. `vs_SSMS.exe` returned
+  `3221225725`, PSADT passed it on, ConfigMgr called the enforcement failed and left the
+  application at `NotInstalled` for half an hour without re-evaluating. Triggering the
+  deployment again resolved it: detection ran first, found SSMS present and flipped the state
+  to `Installed` without installing anything a second time. The crash code was deliberately
+  **not** added to the deployment type's success codes - that would swallow real crashes of
+  this package from now on.
+
 ### What the run changed in the code
 
+* **`Update-CMDistributionPoint` creates a new content object every time it runs**, not a new
+  version of the existing one. Measured on `Notepad++ - 8.9.8`: the content ID changes across
+  that call and does not change across `Set-CMScriptDeploymentType`. Clients treat a new
+  content object as content they have never seen and download the whole package again. The
+  tool called it on every publish, so publishing an unchanged 5 GB package three times left
+  three complete copies in the client cache, filled it, and from then on every distribution
+  failed with `0x87D01201` while the client quietly went on running the old content.
+  The content folder now gets a cheap fingerprint - file count, total bytes, newest write time
+  - kept in the deployment type comment, which `Set-CMScriptDeploymentType` writes without
+  touching the content object. The refresh only runs when the fingerprint really differs.
+  Both directions were measured: two unchanged publishes keep `Content_17d8c177`; adding a
+  single file produces `Content_b93d4d06` and triggers the distribution.
+  The comment comes back as `LocalizedDescription` on the deployment type object, and in the
+  XML it is a `<Description>` below `<DeploymentType>` - not under `DisplayInfo`.
+* **The install and uninstall commands follow `Apps.csv` on every build.** They used to be
+  inserted once, when the template was created, and never again - because inserting twice
+  would have produced the command twice. The package therefore silently outranked the master
+  list: editing the row changed nothing, while `Set-ADTAppMetadata` rewrote the file on every
+  build anyway, so the timestamp moved and the command did not. A wrong install command
+  survived every attempt to correct it. `Set-PackageCommand` now writes into a marked block
+  that can be rewritten safely. A package with no block is only written into when its section
+  is empty; a hand written command stays and the difference is reported instead.
+* **A bare `{GUID}` after `-ProductCode` is a script block to PowerShell, not a string.** An
+  older version of the tool wrote `Start-ADTMsiProcess -Action 'Uninstall' -ProductCode
+  {102DCD41-...}` into packages, and every uninstall failed with "Cannot evaluate parameter
+  'ProductCode' because its argument is specified as a script block and there is no input" - a
+  message that says nothing about the missing quotes. `Repair-CommandLine` restores them
+  before the line is written; quotes that are already there are left alone.
 * `check-prereqs` used `Get-InstalledModule`, which needs PowerShellGet and only reports
   modules installed through it. Started from a pwsh 7 terminal, Windows PowerShell inherits a
   `PSModulePath` containing the PowerShell 7 WindowsApps folder, PowerShellGet then fails to
@@ -509,19 +598,21 @@ it is the tool's own function in `Functions\setup.ps1`.
   Selection is from the site's applications, so a collection whose application is already gone
   is unreachable. Four of them were left behind by the collection bug above and had to be
   deleted separately. Worth a small "orphaned collections" cleanup in the tools menu.
-* **`Notepad++ - 8.9.8` is real too**, same situation as 7-Zip below: application, two `ins-*`
-  collections, package, `Apps.csv` row and the download in `_DL\Notepad++ - 8.9.8\`. No content,
-  no deployment. The site had no Notepad++ before, so nothing is superseded.
-* **`7-Zip - 26.02.00.0` is real, not a test object.** The catalog run created the application,
-  its two `ins-*` collections, the package under `C:\Sources\Applications\7-Zip - 26.02.00.0`,
-  the `Apps.csv` row and the download in `_DL\7-Zip - 26.02\`. It has no content on any
-  distribution point and no deployment, and it supersedes `26.00.00.0` and `24.9.0.0`. Decide
-  whether it stays: it is a genuinely newer version than what the site holds, so finishing it
-  is a matter of switching `distributeContent` and `createDeployments` on and publishing again.
-  It should not be swept up by the lab cleanup.
-* `distributeContent` and `createDeployments` are `false` in `config.json` - that is where the
-  working agreement wants them before a first publish against a new site. Switch them on
-  again for a real run.
+* **`Notepad++ - 8.9.8` and `7-Zip - 26.02` are real, not test objects**, and both are now
+  deployed and installed on `rd3` along with PDF24, Remote Desktop Manager and SSMS. They
+  should not be swept up by any lab cleanup.
+* **Notepad++ is installed twice on `rd3`** - an EXE and an MSI installation side by side,
+  under two uninstall keys (`Notepad++ (64-bit x64)` and `Notepad++ (x64)`), both reporting
+  8.9.8. Cleanup was offered and not yet decided.
+* **`Oracle_Database_Client-19cx64` cannot be published at all.** Its longest path is 285
+  characters, past the 260 character limit, and no layout change gets it under. Nothing has
+  been decided about it.
+* **Nothing warns before publishing when a path is too long.** The SSMS package sits at 259
+  characters over UNC, one character below the limit; the Oracle one is past it. A check
+  before publishing was proposed and not built.
+* `distributeContent` and `createDeployments` are `true` in `config.json`. The working
+  agreement wants them `false` before a *first* publish against a **new** site - set them back
+  if the tool is pointed somewhere else.
 * Packages created before 2026-08-28 may still contain a leftover `_Helper` folder. It is
   ignored; it can be deleted.
 
