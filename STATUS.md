@@ -384,6 +384,33 @@ Two things worth knowing for the next time:
   The one that matters is `Invoke-CMClientAction -ActionType ClientNotificationAppDeplEvalNow`,
   and there is a `ClientNotificationRequestHWInvNow` next to it.
 
+### The file clause on a client, and the last detection method (2026-08-31)
+
+`Notepad++ - 8.9.8` was deployed to rd3, which had no Notepad++ at all. `AppEnforce.log`:
+`Application not discovered` before, exit code 0 after 16 seconds, `Discovered application`
+after. The file ends up in `C:\Program Files\Notepad++\notepad++.exe` - the 64 bit view, which
+only the `Is64Bit="true"` half of the pair matches. Before that fix there was one clause with
+`Is64Bit="false"`, which would have looked in `Program Files (x86)` and never found it. So the
+fix is shown on a machine rather than only in the XML.
+
+**`DetectionMethod = Script` could never have worked.** Renaming the method from `Custom`
+never reached `New-DetectionScript`, which still tested for `Custom` and then looked for a
+template called `detection_template-Script.ps1` that does not exist. Both names are accepted
+now. Verified with a throwaway package: `ScriptType` 0, the hand written script from
+`Content\SupportFiles\detection.ps1` taken verbatim with the signature prepended, no enhanced
+detection method at all, and a second publish overwrites rather than stacks - which is what
+`ScriptText` does and clauses do not.
+
+**Replacing a legacy script detection with a clause works.** `iX-Haus Client Setup - 20.25.0`
+went from script detection to a native MSI clause (`Detection differs from the 0 rule(s)`) and
+settled to `Detection unchanged` on the next run. It became an MSI clause rather than a
+registry one because the package ships a single MSI with no PSADT metadata, so it counts as
+zero-config.
+
+The retire workflow removed the throwaway package completely - deployments, content,
+collections, application, folder - which is the first time it ran on an application that had
+all of them.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -445,10 +472,10 @@ it is the tool's own function in `Functions\setup.ps1`.
   detection method that has not been run since the rewrite - what is untested there is the
   `CustomSource` branch reading `Content\SupportFiles\detection.ps1` and the signature header
   it prepends.
-* Only the MSI clause has been watched evaluating on a client. `Registry` and `File` produce
-  their clauses through the same code, but neither has been observed matching or not matching
-  on a machine - and the `Is64Bit` bug is the reminder that a clause can look right and still
-  find nothing.
+* The `Registry` clause has not been watched evaluating on a client. `MSI` and `File` have
+  been, in both directions. The registry pair is built by the same code as the file pair, and
+  the file pair is what proved the `Is64Bit` fix, so the risk is small - but it is not the same
+  as having seen it.
 * The legacy packages whose CM application uses **script** detection rather than clauses were
   not tried - `Google Chrome`, `Microsoft Edge`, the Office packages and others. Replacing a
   script detection with a clause is a different operation from replacing a clause, and it has
