@@ -716,11 +716,11 @@ function Open-SelectDialogWithEdit {
             Export-Csv -LiteralPath $CsvPath -NoTypeInformation -Encoding UTF8 -Delimiter ';'
     }
 
+    # An empty list is a normal starting state, not a problem: it is exactly what
+    # a new site looks like. Refusing to open the dialog then was a dead end -
+    # this dialog is the only way to add the first row, so an empty Apps.csv
+    # made it impossible to add anything at all.
     $data = @(Load-Data)
-    if ($data.Count -eq 0) {
-        $null = Show-MessageDialog -Text "The app list is empty:`n$CsvPath" -Caption 'SCCMAppHelper' -Buttons 'OK' -Icon 'Information'
-        return @()
-    }
 
     $window = New-Object Windows.Window
     $window.Title = $title
@@ -739,7 +739,16 @@ function Open-SelectDialogWithEdit {
     $dataGrid.SelectionUnit = 'FullRow'
     $dataGrid.IsReadOnly = $true
 
-    $columnOrder = ($data | Select-Object -First 1).PSObject.Properties.Name | Where-Object { $_ -ne '__InternalId' }
+    # With rows, the columns are whatever they carry. Without them there is
+    # nothing to read the shape from, so it comes from the master list schema -
+    # which is what New would fill in anyway.
+    # The empty entry has to be filtered out, not just the internal one: with no
+    # rows, .PSObject on nothing yields $null, and @($null) is an array of one -
+    # so a plain count check never sees an empty list.
+    $columnOrder = @(($data | Select-Object -First 1).PSObject.Properties.Name |
+                        Where-Object { $_ -and $_ -ne '__InternalId' })
+    if ($columnOrder.Count -eq 0) { $columnOrder = @($script:AppListColumns) }
+
     foreach ($property in $columnOrder) {
         $column = New-Object Windows.Controls.DataGridTextColumn
         $column.Header = $property

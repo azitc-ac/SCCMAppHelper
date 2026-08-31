@@ -184,7 +184,7 @@ try {
     Test-That 'the app list dialog appears' ($null -ne $appList)
     if ($appList) {
         $rows = Get-UiaElement -Root $appList -ControlType DataItem
-        Test-That 'the app list is not empty' ($rows.Count -gt 0) "rows: $($rows.Count)"
+        Write-Host ("        the app list holds {0} row(s)" -f $rows.Count) -ForegroundColor DarkGray
         foreach ($id in 'New', 'Edit', 'Duplicate', 'Delete', 'OK', 'Cancel') {
             Test-That "app list button [$id] is present" ($null -ne (Find-UiaElement -Root $appList -AutomationId $id -TimeoutSeconds 3))
         }

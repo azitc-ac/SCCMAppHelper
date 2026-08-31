@@ -343,8 +343,15 @@ $script:AppListColumns = @(
 function Update-AppListSchema {
     param([Parameter(Mandatory = $true)][string]$CsvPath)
 
-    if (-not (Test-Path -LiteralPath $CsvPath)) {
-        Write-Warn "App list not found, creating an empty one: $CsvPath"
+    # A missing file and a file emptied by hand are the same situation: there is
+    # no header to read the shape from, so one is written.
+    $header = $null
+    if (Test-Path -LiteralPath $CsvPath) {
+        $header = Get-Content -LiteralPath $CsvPath -TotalCount 1 -ErrorAction SilentlyContinue
+    }
+
+    if (-not $header -or [string]::IsNullOrWhiteSpace(($header -replace '﻿', ''))) {
+        Write-Warn "App list is empty, writing the column header: $CsvPath"
         Set-Content -LiteralPath $CsvPath -Value ('"' + ($script:AppListColumns -join '";"') + '"') -Encoding UTF8
         return
     }
