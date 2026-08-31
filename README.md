@@ -195,6 +195,25 @@ file", which points nowhere near the cause.
 `packageLayout = Subfolder` restores the old shape. Either way the layout of an existing
 package is read from the package itself, so both keep working and nothing has to be moved.
 
+### Path length
+
+Publishing stops before anything is created when a file would land past 259 characters once
+the content is addressed over UNC, and names the files.
+
+The local path is not what decides it - the site reaches the package through the content
+share, so the **server name is part of every path**. The deepest file of an SQL Server
+Management Studio package measures 259 characters under `\\CM1.home.local` and 265 under
+`\\VMSCCM.crem-cloud.de`. The same package, from the same tool, publishes on one site and not
+on the other.
+
+Without the check ConfigMgr reports `could not find file` for a file that is plainly there,
+and it fails halfway: the application is created, the deployment type is not.
+
+The shortest way out is usually a shorter package folder, and that name comes from the `Name`
+and `Version` columns of the app list - `Microsoft SQL Server Management Studio - 22.9.2` is
+48 characters, `SSMS - 22.9.2` is 14. Shortening `sourceRoot` works too, but it re-points
+every package at a new location and every client then downloads all of them again.
+
 ### Where the logs are
 
 Every package gets `LogPath` in its `Config\config.psd1` rewritten to `psadtLogPath`, which is

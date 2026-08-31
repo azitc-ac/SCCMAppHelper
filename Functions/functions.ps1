@@ -499,6 +499,49 @@ function Get-DeploymentTypeFingerprint {
     return ''
 }
 
+<#
+    Finds the files whose path is too long for ConfigMgr once the content is
+    addressed over UNC.
+
+    Windows stops at 260 characters, so 259 are usable. ConfigMgr does not say
+    that: it reports "Die Datei ... konnte nicht gefunden werden" / "Could not
+    find file", which sends you looking for a missing file that is sitting right
+    there. Worse, it fails halfway - the application is created and the
+    deployment type is not.
+
+    The local path is not what counts. The site addresses the package through
+    the content share, and a long server name is enough to make the difference:
+    the deepest file of an SQL Server Management Studio package measures 259
+    characters under \\CM1.home.local and 265 under \\VMSCCM.crem-cloud.de. The
+    same package, published from the same tool, works on one site and not on
+    the other.
+#>
+function Get-OverlongContentPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContentPath,
+        [Parameter(Mandatory = $true)][string]$ContentUnc,
+        [int]$Limit = 259
+    )
+
+    if (-not (Test-Path -LiteralPath $ContentPath)) { return @() }
+
+    $prefix = $ContentUnc.TrimEnd('\')
+    $local  = $ContentPath.TrimEnd('\')
+    $found  = @()
+
+    foreach ($file in [System.IO.Directory]::EnumerateFiles($local, '*', [System.IO.SearchOption]::AllDirectories)) {
+        $length = $prefix.Length + ($file.Length - $local.Length)
+        if ($length -gt $Limit) {
+            $found += [pscustomobject]@{
+                Length   = $length
+                Over     = $length - $Limit
+                Relative = $file.Substring($local.Length)
+            }
+        }
+    }
+    return @($found | Sort-Object Length -Descending)
+}
+
 function Set-ADTLogPath {
     param(
         [Parameter(Mandatory = $true)][string]$ContentRoot,
@@ -1627,6 +1670,29 @@ function Publish-CMApplication {
     $contentUnc  = ConvertTo-CMContentPath -Path $contentPath -Config $Config
 
     if (-not $metadata.version) { throw "No version could be determined for [$PackageRoot] - expected a folder named '<Name> - <Version>'." }
+
+    # Refuse before anything is created rather than leaving an application
+    # behind without a deployment type - see Get-OverlongContentPath.
+    $overlong = Get-OverlongContentPath -ContentPath $contentPath -ContentUnc $contentUnc
+    if ($overlong.Count -gt 0) {
+        $worst  = $overlong[0]
+        $folder = Split-Path -Leaf $PackageRoot
+        $spare  = $worst.Over
+
+        Write-Fail ("{0} file(s) are past the {1} character path limit when addressed as [{2}]." -f $overlong.Count, 259, $contentUnc)
+        foreach ($item in ($overlong | Select-Object -First 5)) {
+            Write-Warn ("  {0} characters ({1} too many): ...{2}" -f $item.Length, $item.Over,
+                $item.Relative.Substring([Math]::Max(0, $item.Relative.Length - 90)))
+        }
+        if ($overlong.Count -gt 5) { Write-Warn ("  and {0} more." -f ($overlong.Count - 5)) }
+
+        throw ("The content path is too long for ConfigMgr. ConfigMgr would report this as " +
+               "'could not find file' and would leave the application behind without a deployment type. " +
+               "Shorten the package by at least $spare characters - renaming the folder [$folder] is " +
+               "usually the shortest way there, and the name comes from the Name and Version columns of " +
+               "the app list. Changing sourceRoot also works but re-points every package, and every " +
+               "client then downloads all of them again.")
+    }
 
     $app      = Resolve-PackageApp -PackageRoot $PackageRoot -Metadata $metadata -Config $Config
     $artifact = New-PublishArtifact -PackageRoot $PackageRoot -App $app -Config $Config

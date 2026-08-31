@@ -604,12 +604,15 @@ Two more things surfaced on the way:
 * **Notepad++ is installed twice on `rd3`** - an EXE and an MSI installation side by side,
   under two uninstall keys (`Notepad++ (64-bit x64)` and `Notepad++ (x64)`), both reporting
   8.9.8. Cleanup was offered and not yet decided.
-* **`Oracle_Database_Client-19cx64` cannot be published at all.** Its longest path is 285
-  characters, past the 260 character limit, and no layout change gets it under. Nothing has
-  been decided about it.
-* **Nothing warns before publishing when a path is too long.** The SSMS package sits at 259
-  characters over UNC, one character below the limit; the Oracle one is past it. A check
-  before publishing was proposed and not built.
+* **`Oracle_Database_Client-19cx64` cannot be published at all.** 20 of its files are past the
+  limit, the worst at 285 characters - 26 too many. Publishing now refuses it with that list
+  instead of failing halfway. Nothing has been decided about the package itself.
+* **The customer site hit the same limit on 2026-09-01**, on a package that publishes here
+  without complaint: the SSMS layout measures 259 characters under `\\CM1.home.local` and 265
+  under `\\VMSCCM.crem-cloud.de`. Four files over, purely because the server name is six
+  characters longer. It had already created the application and failed on the deployment type
+  by the time it was noticed. `Get-OverlongContentPath` now stops that before anything is
+  created; the remedy for that package is a shorter folder name.
 * `distributeContent` and `createDeployments` are `true` in `config.json`. The working
   agreement wants them `false` before a *first* publish against a **new** site - set them back
   if the tool is pointed somewhere else.
