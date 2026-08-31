@@ -420,12 +420,19 @@ function ConvertTo-CMContentPath {
 }
 
 <#
-    Subfolder layout (default):  <package>\Content\  = PSADT root = content location
-    Flat layout (legacy):        <package>\          = PSADT root = content location
+    Flat layout (default):  <package>\          = PSADT root = content location
+    Subfolder layout:       <package>\Content\  = PSADT root = content location
 
-    Nothing else belongs beside the content. What ConfigMgr needs on top of it -
-    detection script and icon - is rendered into a temporary folder at publish
-    time by New-PublishArtifact.
+    An existing package is read from what is on disk, so both keep working and
+    packageLayout only decides where a new one is created.
+
+    Flat is the default because nothing else belongs beside the content: what
+    ConfigMgr needs on top of it - detection script and icon - is rendered into a
+    temporary folder at publish time by New-PublishArtifact. The Content
+    subfolder existed to keep the old _Helper out of what is distributed; with
+    that gone it wrapped a single folder and cost eight characters of path
+    length, which is what pushed six files of an SQL Server Management Studio
+    package past the 260 character limit.
 #>
 function Get-PackageContentPath {
     param(

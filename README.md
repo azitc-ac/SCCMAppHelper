@@ -147,22 +147,29 @@ a single request.
 ## Package layout
 
 ```
-<sourceRoot>\<Name> - <Version>\
-    Content\                     <- PSADT v4 root, this is the ConfigMgr content location
-        Invoke-AppDeployToolkit.ps1
-        Files\
-        Config\config.psd1       <- log path patched to psadtLogPath
-        SupportFiles\
-            detection.ps1        <- optional, only for DetectionMethod = Script
-            logo.png             <- optional, wins over Logos\
+<sourceRoot>\<Name> - <Version>\      <- PSADT v4 root, and the ConfigMgr content location
+    Invoke-AppDeployToolkit.ps1
+    Files\
+    Config\config.psd1                <- log path patched to psadtLogPath
+    SupportFiles\
+        detection.ps1                 <- optional, only for DetectionMethod = Script
+        logo.png                      <- optional, wins over Logos\
 ```
 A package holds its PSADT content and nothing else. The application icon and,
 where one is needed, the detection script are rendered into a temporary folder
 at publish time and removed again afterwards - so a fix in the tool reaches
 packages built with an earlier version without touching them.
 
-Legacy packages whose PSADT root is the package folder itself are detected and handled as
-well (`packageLayout = Flat`).
+That is why the content sits in the package folder itself rather than a `Content`
+subfolder. The subfolder existed to keep the tool's own files - the old `_Helper` - out of
+what goes to the distribution points; with those gone it wrapped a single folder for no
+reason, and cost eight characters of path length. Which is not academic: the deepest path in
+an SQL Server Management Studio package reaches 259 characters over UNC, one below the limit,
+and the subfolder pushed six of its files past it. ConfigMgr then reports "Could not find
+file", which points nowhere near the cause.
+
+`packageLayout = Subfolder` restores the old shape. Either way the layout of an existing
+package is read from the package itself, so both keep working and nothing has to be moved.
 
 ### Importing existing packages
 
