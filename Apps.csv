@@ -1,1 +1,5 @@
 ﻿"Publisher";"Name";"Version";"DetectionMethod";"DetectionPattern";"ProductCode";"InstallCmd";"UninstallCmd";"Notes"
+"Igor Pavlov";"7-Zip";"26.02.00.0";"MSI";"";"{23170F69-40C1-2702-2602-000001000000}";"";"";"7zip.7zip 26.02 from winget-pkgs (x64, wix)"
+"Notepad++ Team";"Notepad++";"8.9.8";"MSI";"";"{224C0E17-FB79-4AE2-9A47-5556FCEF39C4}";"";"";"Notepad++.Notepad++ 8.9.8 from winget-pkgs (x64, wix)"
+"geek software GmbH";"PDF24 Creator";"11.30.1";"MSI";"";"{2B4DC485-D730-49AB-BD17-9E67B2ADA492}";"";"";"geeksoftwareGmbH.PDF24Creator 11.30.1 from winget-pkgs (x64, wix)"
+"Devolutions inc.";"Remote Desktop Manager";"2026.2.18.0";"MSI";"";"{558D83E1-0E6F-46A7-A4D0-0D117F274604}";"";"";"Devolutions.RemoteDesktopManager 2026.2.18.0 from winget-pkgs (x64, msi)"

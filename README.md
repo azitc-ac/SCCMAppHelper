@@ -81,6 +81,17 @@ buttons:
 
 That replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
 
+`DetectionMethod` is a list rather than a free text field, and what `DetectionPattern` has to
+contain depends on it - so the hint under the field follows the method, and the field is
+disabled where nothing belongs in it:
+
+| Method | `DetectionPattern` | Install commands |
+| --- | --- | --- |
+| `MSI` | nothing - the ProductCode column, or the single MSI in `.iles` | empty, psadt deploys the msi itself |
+| `Registry` | the uninstall key | yours |
+| `File` | the full path of the installed file | yours |
+| `Script` | nothing - `ContentSupportFilesdetection.ps1` | yours |
+
 ## From catalog
 
 The third prefill source in the record editor, next to **From MSI...** and **From EXE...**:
