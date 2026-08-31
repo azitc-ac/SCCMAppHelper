@@ -98,6 +98,11 @@ was rewritten for its metadata anyway, so the timestamp moved and the command di
 A package built before this has no block. It is written into only when its section is still
 empty; a command somebody put there by hand stays, and the difference is reported instead.
 
+A GUID in braces is a script block to PowerShell, not a string, so
+`-ProductCode {102DCD41-...}` fails on the client with a message about script blocks and no
+input that says nothing about the missing quotes. The quotes are put back before the line is
+written; quotes that are already there are left alone.
+
 `DetectionMethod` is a list rather than a free text field, and what `DetectionPattern` has to
 contain depends on it - so the hint under the field follows the method, and the field is
 disabled where nothing belongs in it:
@@ -133,6 +138,8 @@ So there are three ways in, in the order the dialog tries them:
 
 Whatever is found the hard way can be kept: **Remember** writes it into `catalog.json`, so it
 is found by name next time. The list is meant to grow.
+
+### What the dialog then does
 
 1. **Pick** from `Config\catalog.json`, or search the repository for anything else.
 2. **Resolve** the newest version, and say which versions of it `Apps.csv` already holds.
@@ -187,6 +194,16 @@ file", which points nowhere near the cause.
 
 `packageLayout = Subfolder` restores the old shape. Either way the layout of an existing
 package is read from the package itself, so both keep working and nothing has to be moved.
+
+### Where the logs are
+
+Every package gets `LogPath` in its `Config\config.psd1` rewritten to `psadtLogPath`, which is
+`C:\Windows\CCM\Logs\PSADT` by default. **Not** `C:\Windows\Logs\Software`, where PSADT would
+put them and where you will otherwise look for them in vain. They sit next to the ConfigMgr
+client logs on purpose - `AppEnforce.log`, `AppDiscovery.log` and the PSADT log of the same
+run are then in one folder and one CMTrace window.
+
+Packages built before this, or by hand, keep whatever their own config says.
 
 ### Importing existing packages
 
@@ -322,16 +339,34 @@ site.
 | Key | Meaning |
 | --- | --- |
 | `installCommand`, `uninstallCommand` | Deployment type command lines |
-| `collections` | Collections created per application, `{App}` is replaced by `Name - Version` |
-| `globalDeployments` | Deployments to existing collections, e.g. an "all apps" catalog collection |
+| `collections` | Collections created per application. Each entry has a `namePattern` where `{App}` becomes `Name - Version`, a `deployPurpose` (`Required` or `Available`) and a `userNotification` |
+| `globalDeployments` | Deployments to existing collections, e.g. an "all apps" catalog collection. Each entry names its `collectionName` and its `deployPurpose` |
 | `supersedeOlderVersions` | Wire the new application as superseding older versions of the same product |
 | `supersedenceUninstall` | Uninstall the old version when superseding |
 | `distributeContent`, `createDeployments` | Switch off to only create the application |
 | `openExplorerOnCreate`, `openEditorOnCreate` | Interactive steps during packaging |
 | `packageAuthor` | Author written into the PSADT script, empty = current user |
+| `packageLayout` | `Flat` or `Subfolder` - see **Package layout** |
+| `psadtLogPath` | Where the packages write their PSADT logs. Patched into every package's `Config\config.psd1` |
+| `maximumRuntimeMins`, `estimatedRuntimeMins` | Runtime on the deployment type |
+| `editor` | Program that **Edit script** opens the PSADT script with, empty = `notepad` |
+| `removeExistingPackageDirOnEachRun` | Delete an existing package folder before rebuilding it. `false`, and it should stay that way unless you mean it |
 
 Everything is idempotent: existing applications get their deployment type and detection
-updated plus a content refresh, existing collections and deployments are reused.
+updated, existing collections and deployments are reused.
+
+**The content is only sent to the distribution points when it really changed.** Publishing an
+unchanged package prints `Content already distributed and unchanged - nothing to send`. That
+is not laziness: `Update-CMDistributionPoint` creates a *new content object* on every call,
+never a new version of the existing one, and every client then downloads the whole package
+again. Three publishes of a five gigabyte package are enough to fill a 20 GB client cache, and
+once it is full every further distribution fails with `0x87D01201` **while the client goes on
+running the old content without reporting anything**. The tool therefore keeps a fingerprint
+of the content folder - file count, total bytes, newest write time - in the deployment type
+comment and compares it before refreshing.
+
+To force a refresh anyway, change something in the content folder, or update the content by
+hand in the console.
 
 ## Tools
 
