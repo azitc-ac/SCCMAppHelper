@@ -340,6 +340,7 @@ function Select-CatalogInstaller {
     param(
         [Parameter(Mandatory = $true)]$Installers,
         [string]$Architecture = 'x64',
+        [string]$Locale = 'en-US',
         $Root
     )
 
@@ -350,7 +351,8 @@ function Select-CatalogInstaller {
     # what the install command is built from.
     if ($Root) {
         foreach ($entry in @($Installers)) {
-            foreach ($key in 'InstallerType', 'InstallerSwitches', 'Scope', 'UpgradeBehavior', 'ProductCode', 'AppsAndFeaturesEntries') {
+            foreach ($key in 'InstallerType', 'InstallerSwitches', 'Scope', 'UpgradeBehavior',
+                             'ProductCode', 'AppsAndFeaturesEntries', 'InstallerLocale') {
                 if (-not $entry.Contains($key) -and $Root.Contains($key)) { $entry[$key] = $Root[$key] }
             }
         }
@@ -363,20 +365,32 @@ function Select-CatalogInstaller {
         $type = [string]$entry['InstallerType']
         if (-not $type -and $entry.Contains('NestedInstallerType')) { $type = [string]$entry['NestedInstallerType'] }
         $arch = [string]$entry['Architecture']
+        $entryLocale = [string]$entry['InstallerLocale']
+
+        # Some manifests differ only by language - SQL Server Management Studio
+        # offers twelve installers, all x64 and all burn, one per locale. Ranking
+        # on architecture and type alone leaves the order to chance, and the
+        # first one happened to be Russian.
+        $localeRank = if (-not $entryLocale)                              { 1 }   # no locale: language neutral
+                      elseif ($entryLocale -eq $Locale)                   { 0 }
+                      elseif ($entryLocale -like ($Locale.Split('-')[0] + '-*')) { 2 }
+                      else                                               { 3 }
 
         [pscustomobject]@{
-            Architecture = $arch
+            Architecture  = $arch
             InstallerType = $type
+            Locale        = $(if ($entryLocale) { $entryLocale } else { '-' })
             InstallerUrl  = [string]$entry['InstallerUrl']
             Sha256        = [string]$entry['InstallerSha256']
             Entry         = $entry
             ArchRank      = $(if ($archRank.ContainsKey($arch)) { $archRank[$arch] } else { 8 })
             TypeRank      = $(if ($typeRank.ContainsKey($type)) { $typeRank[$type] } else { 8 })
+            LocaleRank    = $localeRank
             Preferred     = $(if ($arch -eq $Architecture) { 0 } else { 1 })
         }
     }
 
-    return @($rows | Sort-Object Preferred, TypeRank, ArchRank)
+    return @($rows | Sort-Object Preferred, TypeRank, LocaleRank, ArchRank)
 }
 
 #endregion
@@ -739,7 +753,7 @@ function Read-CatalogPackage {
 
     if ($installers.Count -gt 1) {
         $picked = Open-SelectDialog -title 'Which installer?' -data (
-            $installers | Select-Object Architecture, InstallerType, InstallerUrl, Sha256)
+            $installers | Select-Object Architecture, InstallerType, Locale, InstallerUrl, Sha256)
         if ($null -ne $picked) { $picked = $picked | Where-Object { $_ -isnot [int] } | Select-Object -First 1 }
         if (-not $picked) { Write-Info 'Cancelled.'; return $null }
         $installer = $installers | Where-Object { $_.InstallerUrl -eq $picked.InstallerUrl } | Select-Object -First 1

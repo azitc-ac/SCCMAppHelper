@@ -540,6 +540,30 @@ function Open-EditDialog {
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('Publisher', 'Vendor', 'Manufacturer') -Value $props['Manufacturer']
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('DetectionMethod')                     -Value 'Registry'
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('InstallCmd') -Value ("Start-ADTProcess -FilePath '{0}' -ArgumentList '/S' -WindowStyle 'Hidden'" -f (Split-Path -Leaf $ofd.FileName))
+
+                # /S is a guess and it is only right for NSIS. A version resource
+                # does not say which installer kind built the file, so the switch
+                # cannot be derived from what was just read - and the wrong one
+                # does not fail loudly: the installer ignores it, waits for a
+                # click nobody can give it in session 0, and the deployment sits
+                # at "in progress" until it times out.
+                if ($textBoxes.Contains('InstallCmd')) {
+                    $textBoxes['InstallCmd'].ToolTip = 'The silent switch depends on the installer kind - /S fits NSIS, and is only a guess here.'
+                }
+                $null = Show-MessageDialog -Owner $window -Caption 'From EXE' -Buttons 'OK' -Icon 'Warning' -Text (
+                    "The install command was filled in with /S. That is the NSIS switch, and it is a guess: " +
+                    "an EXE does not say which installer built it.`n`n" +
+                    "Check it against the installer:`n" +
+                    "    NSIS                    /S`n" +
+                    "    Inno Setup              /VERYSILENT /NORESTART`n" +
+                    "    Burn, Visual Studio     --quiet --norestart --wait`n" +
+                    "    InstallShield           /s /v`"/qn`"`n`n" +
+                    "The wrong switch does not fail loudly. The installer ignores it and waits for a click, " +
+                    "which nobody can give it when it runs as SYSTEM - the deployment then sits at " +
+                    "`"in progress`" until it times out.`n`n" +
+                    "For a Visual Studio style bootstrapper --wait matters as much as the silent switch: " +
+                    "without it the bootstrapper returns before the installation has finished, and detection " +
+                    "runs against a half installed product.")
             }
         }
         catch { $null = Show-MessageDialog -Text ("EXE could not be read: {0}" -f $_.Exception.Message) -Caption 'EXE' -Buttons 'OK' -Icon 'Error' }
