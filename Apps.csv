@@ -27,6 +27,7 @@
 "Devolutions inc.";"Remote Desktop Manager";"2025.1.25.0";"Registry";"";"";"";"";""
 "Devolutions inc.";"Remote Desktop Manager";"2025.3.32.0";"Registry";"";"";"";"";""
 "Devolutions inc.";"Remote Desktop Manager";"2026.2.18.0";"Registry";"";"";"";"";""
+"SCCMAppHelper";"SCCMAppHelper Scripttest";"1.0.0";"Script";"";"";"";"";"Throwaway - proves DetectionMethod = Script"
 "SCCMAppHelper";"SCCMAppHelper Testapp";"1.0.0";"Registry";"";"";"";"";"Lab test app for the first ConfigMgr run of SCCMAppHelper"
 "SCCMAppHelper";"SCCMAppHelper Testapp";"2.0.0";"Registry";"";"";"";"";"Lab test app v2 - supersedence check"
 "SCCMAppHelper";"SCCMAppHelper Testapp";"3.0.0";"Registry";"SCCMAppHelper Testapp";"";"";"";"Lab test app v3 - native registry detection"
