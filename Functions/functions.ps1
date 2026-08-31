@@ -447,6 +447,58 @@ function Get-PackageContentPath {
 }
 
 
+<#
+    A cheap description of what is in the content folder: how many files, how
+    many bytes, and when the newest of them was written. Only metadata is read,
+    so even a five gigabyte package is answered in a moment.
+
+    It exists because Update-CMDistributionPoint creates a *new content object*
+    every time it runs, not a new version of the existing one. A client treats
+    that as content it has never seen and downloads the whole package again.
+    Publishing an unchanged package three times therefore left three complete
+    copies in the client cache, filled it, and from then on every distribution
+    failed with 0x87D01201 while the client quietly went on running the old
+    content - the source, the application and the deployment all looked correct
+    the whole time.
+
+    The fingerprint is kept in the deployment type comment, which Set-CM
+    ScriptDeploymentType writes without touching the content object.
+#>
+function Get-ContentFingerprint {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+
+    $count = 0
+    $bytes = [long]0
+    $newest = [long]0
+    foreach ($file in [System.IO.Directory]::EnumerateFiles($Path, '*', [System.IO.SearchOption]::AllDirectories)) {
+        try {
+            $info = [System.IO.FileInfo]::new($file)
+            $count++
+            $bytes += $info.Length
+            if ($info.LastWriteTimeUtc.Ticks -gt $newest) { $newest = $info.LastWriteTimeUtc.Ticks }
+        }
+        catch { }   # a file we cannot stat simply does not count towards the sum
+    }
+    return ('{0}f/{1}b/{2}' -f $count, $bytes, $newest)
+}
+
+function Get-DeploymentTypeFingerprint {
+    param($DeploymentType)
+
+    # The -Comment of a deployment type comes back as LocalizedDescription; in
+    # the XML it is a <Description> below <DeploymentType>, not under DisplayInfo.
+    $comment = [string]$DeploymentType.LocalizedDescription
+    if (-not $comment) {
+        $node = ([xml]$DeploymentType.SDMPackageXML).SelectSingleNode('//*[local-name()="DeploymentType"]/*[local-name()="Description"]')
+        if ($node) { $comment = $node.InnerText }
+    }
+    if (-not $comment) { return '' }
+    if ($comment -match 'content\s+(?<fp>\d+f/\d+b/\d+)') { return $Matches['fp'] }
+    return ''
+}
+
 function Set-ADTLogPath {
     param(
         [Parameter(Mandatory = $true)][string]$ContentRoot,
@@ -1644,6 +1696,15 @@ function Publish-CMApplication {
                 Comment                  = (Get-ToolSignature)
                 ErrorAction              = 'Stop'
             }
+
+            # What is in the content folder right now, so the distribution point
+            # is only refreshed when it really has to be - see
+            # Get-ContentFingerprint for why that matters so much.
+            $contentFingerprint = Get-ContentFingerprint -Path $contentPath
+            if ($contentFingerprint) {
+                $dtParams['Comment'] = '{0} | content {1}' -f (Get-ToolSignature), $contentFingerprint
+            }
+            $contentChanged = $true
             if ($Config.maximumRuntimeMins)   { $dtParams['MaximumRuntimeMins']   = $Config.maximumRuntimeMins }
             if ($Config.estimatedRuntimeMins) { $dtParams['EstimatedRuntimeMins'] = $Config.estimatedRuntimeMins }
 
@@ -1661,6 +1722,31 @@ function Publish-CMApplication {
             }
 
             if ($existingDt) {
+                # Sending a location that has not changed is pointless work, and
+                # a location that *has* changed deserves to be said out loud -
+                # it means every client will fetch the package from somewhere
+                # else. (The content object itself is not affected either way;
+                # what regenerates it is Update-CMDistributionPoint, which is
+                # gated further down.)
+                $storedLocation = ([xml]$existingDt.SDMPackageXML).AppMgmtDigest.DeploymentType.Installer.Contents.Content.Location
+                if ($storedLocation -and
+                    $storedLocation.TrimEnd('\') -eq $contentUnc.TrimEnd('\')) {
+                    $dtParams.Remove('ContentLocation')
+                    Write-Info 'Content location unchanged - keeping the existing content object.'
+                }
+                elseif ($storedLocation) {
+                    Write-Warn ("Content location changed from [{0}] to [{1}] - ConfigMgr will create new content." -f $storedLocation, $contentUnc)
+                }
+
+                $storedFingerprint = Get-DeploymentTypeFingerprint -DeploymentType $existingDt
+                if ($contentFingerprint -and $storedFingerprint -eq $contentFingerprint) {
+                    $contentChanged = $false
+                    Write-Info 'Content is unchanged since the last publish.'
+                }
+                elseif (-not $storedFingerprint) {
+                    Write-Info 'No content fingerprint on the deployment type yet - refreshing once to record one.'
+                }
+
                 # Detection clauses are only ever added, never replaced, and a clause
                 # that was created together with the deployment type cannot be
                 # removed again at all - Set-CMScriptDeploymentType reports it as
@@ -1727,13 +1813,23 @@ function Publish-CMApplication {
                     # "No content destination was found. ... or if the content has
                     # already been distributed to the specified destination."
                     $distributionError = $_.Exception.Message
-                    try {
-                        $null = Update-CMDistributionPoint -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction Stop
-                        Write-Ok 'Content already distributed - update triggered on the distribution points.'
+
+                    # Update-CMDistributionPoint creates a new content object, and
+                    # every client then downloads the whole package again. Doing
+                    # that for a package nobody changed is how the client cache
+                    # fills up, so it only runs when the content really differs.
+                    if (-not $contentChanged) {
+                        Write-Ok 'Content already distributed and unchanged - nothing to send.'
                     }
-                    catch {
-                        Write-Warn ("Content distribution: {0}" -f $distributionError)
-                        Write-Warn ("Content update: {0}" -f $_.Exception.Message)
+                    else {
+                        try {
+                            $null = Update-CMDistributionPoint -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction Stop
+                            Write-Ok 'Content already distributed - update triggered on the distribution points.'
+                        }
+                        catch {
+                            Write-Warn ("Content distribution: {0}" -f $distributionError)
+                            Write-Warn ("Content update: {0}" -f $_.Exception.Message)
+                        }
                     }
                 }
             }
