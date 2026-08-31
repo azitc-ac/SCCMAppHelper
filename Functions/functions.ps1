@@ -551,6 +551,26 @@ function Insert-Commands {
     difference is reported rather than overwritten - the tool has no business
     discarding work it did not write.
 #>
+function Repair-CommandLine {
+    <#
+        A GUID in braces is a script block to PowerShell, not a string. Written
+        into the script unquoted, -ProductCode {102DCD41-...} fails at run time
+        with "Cannot evaluate parameter 'ProductCode' because its argument is
+        specified as a script block and there is no input" - a message that
+        says nothing about the missing quotes. An older version of this tool
+        wrote packages like that and the uninstall failed on the client every
+        time, so the quotes are restored here instead of being left to whoever
+        fills in the app list.
+    #>
+    param([string]$Line)
+
+    $guid = '\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}'
+    return [regex]::Replace($Line, "(?<lead>-ProductCode\s+)(?<guid>$guid)(?<tail>\s|$)", {
+        param($match)
+        $match.Groups['lead'].Value + "'" + $match.Groups['guid'].Value + "'" + $match.Groups['tail'].Value
+    })
+}
+
 function Set-PackageCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
@@ -591,7 +611,8 @@ function Set-PackageCommand {
     $body = @()
     if ($Command) {
         $body = @($begin) +
-                @($Command -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { '        ' + $_.Trim() }) +
+                @($Command -split "`r?`n" | Where-Object { $_.Trim() } |
+                    ForEach-Object { '        ' + (Repair-CommandLine -Line $_.Trim()) }) +
                 @($end)
     }
 
