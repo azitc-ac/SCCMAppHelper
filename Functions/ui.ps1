@@ -387,15 +387,27 @@ function Open-EditDialog {
         [Windows.Controls.Grid]::SetColumn($label, 0)
         $null = $fieldGrid.Children.Add($label)
 
-        $textBox = New-Object Windows.Controls.TextBox
+        # DetectionMethod has four possible values and no others, so it is a list
+        # rather than a free text field. Editable all the same, so an unexpected
+        # value in an old row survives being looked at.
+        if ($key -eq 'DetectionMethod') {
+            $textBox = New-Object Windows.Controls.ComboBox
+            $textBox.IsEditable = $true
+            $textBox.ItemsSource = @('Registry', 'MSI', 'File', 'Script')
+            $textBox.Height = 26
+        }
+        else {
+            $textBox = New-Object Windows.Controls.TextBox
+            $textBox.AcceptsReturn = $isMultiline
+            $textBox.TextWrapping = 'Wrap'
+            if ($isMultiline) { $textBox.Height = 100; $textBox.VerticalScrollBarVisibility = 'Auto' }
+            else { $textBox.Height = 26 }
+        }
+
         $textBox.Text = $value
         $textBox.Margin = '0,0,0,6'
-        $textBox.AcceptsReturn = $isMultiline
-        $textBox.TextWrapping = 'Wrap'
         $textBox.HorizontalAlignment = 'Stretch'
         $textBox.VerticalContentAlignment = 'Center'
-        if ($isMultiline) { $textBox.Height = 100; $textBox.VerticalScrollBarVisibility = 'Auto' }
-        else { $textBox.Height = 26 }
         [Windows.Automation.AutomationProperties]::SetAutomationId($textBox, $key)
         [Windows.Automation.AutomationProperties]::SetName($textBox, $key)
         [Windows.Controls.Grid]::SetRow($textBox, $rowIndex)
@@ -404,6 +416,24 @@ function Open-EditDialog {
 
         $textBoxes[$key] = $textBox
         $rowIndex++
+
+        # What DetectionPattern has to contain depends entirely on the method, so
+        # the hint sits under the field and follows it.
+        if ($key -eq 'DetectionPattern') {
+            $rowDefinition = New-Object Windows.Controls.RowDefinition
+            $rowDefinition.Height = [Windows.GridLength]::Auto
+            $null = $fieldGrid.RowDefinitions.Add($rowDefinition)
+
+            $script:PatternHint = New-Object Windows.Controls.TextBlock
+            $script:PatternHint.Foreground = [System.Windows.Media.Brushes]::DimGray
+            $script:PatternHint.TextWrapping = 'Wrap'
+            $script:PatternHint.Margin = '2,0,0,8'
+            [Windows.Automation.AutomationProperties]::SetAutomationId($script:PatternHint, 'DetectionPatternHint')
+            [Windows.Controls.Grid]::SetRow($script:PatternHint, $rowIndex)
+            [Windows.Controls.Grid]::SetColumn($script:PatternHint, 1)
+            $null = $fieldGrid.Children.Add($script:PatternHint)
+            $rowIndex++
+        }
     }
 
     $null = $stackPanel.Children.Add($fieldGrid)
@@ -413,12 +443,38 @@ function Open-EditDialog {
     # are greyed out and say so rather than silently accepting something that
     # would install the product twice.
     if ($textBoxes.Contains('DetectionMethod')) {
-        $syncCommandFields = {
-            if ($textBoxes['DetectionMethod'].Text.Trim() -eq 'MSI') { Clear-CommandFields  -TextBoxes $textBoxes }
-            else                                                     { Enable-CommandFields -TextBoxes $textBoxes }
+        $hints = @{
+            'Registry' = 'The uninstall key. A bare name is taken below SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall, a value starting with SOFTWARE\ is used as it is. Example: {23170F69-40C1-2702-2602-000001000000} or 7-Zip. Left empty, the ProductCode of the single MSI in .\Files is used.'
+            'MSI'      = 'Nothing needed - detection is by ProductCode, taken from the column beside this one or read from the single MSI in .\Files.'
+            'File'     = 'The full path of the installed file, environment variables included. Example: %ProgramFiles%\Notepad++\notepad++.exe'
+            'Script'   = 'Nothing needed - the detection script is read from Content\SupportFiles\detection.ps1 inside the package.'
         }
-        & $syncCommandFields
-        $textBoxes['DetectionMethod'].Add_TextChanged($syncCommandFields)
+
+        $syncMethod = {
+            $method = $textBoxes['DetectionMethod'].Text
+            if ($method) { $method = $method.Trim() }
+
+            if ($method -eq 'MSI') { Clear-CommandFields -TextBoxes $textBoxes }
+            else                   { Enable-CommandFields -TextBoxes $textBoxes }
+
+            if ($script:PatternHint) {
+                $script:PatternHint.Text = $(if ($hints.ContainsKey($method)) { $hints[$method] } else { '' })
+            }
+            if ($textBoxes.Contains('DetectionPattern')) {
+                $textBoxes['DetectionPattern'].ToolTip = $(if ($hints.ContainsKey($method)) { $hints[$method] } else { $null })
+                $textBoxes['DetectionPattern'].IsEnabled = ($method -notin 'MSI', 'Script')
+            }
+        }
+
+        & $syncMethod
+        # A ComboBox reports a pick through SelectionChanged; typing into it goes
+        # through the text box inside its template, which only exists once the
+        # control is loaded.
+        $textBoxes['DetectionMethod'].Add_SelectionChanged($syncMethod)
+        $textBoxes['DetectionMethod'].Add_Loaded({
+            $inner = $textBoxes['DetectionMethod'].Template.FindName('PART_EditableTextBox', $textBoxes['DetectionMethod'])
+            if ($inner) { $inner.Add_TextChanged($syncMethod) }
+        })
     }
 
     # Prefill from a setup file - this replaces add-NewMSIToAppsCSV.ps1 and is
@@ -485,8 +541,13 @@ function Open-EditDialog {
             $found = Read-CatalogPackage
             if (-not $found) { return }
 
-            foreach ($column in 'Publisher', 'Name', 'Version', 'DetectionMethod', 'DetectionPattern', 'ProductCode', 'Notes') {
-                Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @($column) -Value ([string]$found.Row.$column)
+            # Every field, empty ones included - Set-IfPresent skips blanks,
+            # which is right for a partial prefill from a file the user picked
+            # but wrong here: the catalog replaces the whole record, and a value
+            # the previous package left behind has nothing to do with this one.
+            foreach ($column in 'Publisher', 'Name', 'Version', 'DetectionMethod',
+                                'DetectionPattern', 'ProductCode', 'InstallCmd', 'UninstallCmd', 'Notes') {
+                if ($textBoxes.Contains($column)) { $textBoxes[$column].Text = [string]$found.Row.$column }
             }
 
             $null = Show-MessageDialog -Text ("{0} {1} is ready.`n`nThe installer is here:`n{2}`n`nSignature: {3}" -f

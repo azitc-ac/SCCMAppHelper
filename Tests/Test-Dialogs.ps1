@@ -207,10 +207,17 @@ try {
         Test-That 'the record editor appears' ($null -ne $editor)
 
         if ($editor) {
-            foreach ($field in 'Publisher', 'Name', 'Version', 'DetectionMethod', 'DetectionPattern') {
-                Test-That "editor field [$field] is present" ($null -ne (Find-UiaElement -Root $editor -AutomationId $field -TimeoutSeconds 3))
+            # By id rather than by control type: DetectionMethod is a combo box,
+            # not a text box, and an editable combo box brings its own inner edit
+            # control along, so counting types is not a stable check.
+            $missing = @()
+            foreach ($field in 'Publisher', 'Name', 'Version', 'DetectionMethod', 'DetectionPattern',
+                               'ProductCode', 'InstallCmd', 'UninstallCmd', 'Notes') {
+                if (-not (Find-UiaElement -Root $editor -AutomationId $field -TimeoutSeconds 3)) { $missing += $field }
             }
-            Test-That 'the editor shows all nine columns' ((Get-UiaElement -Root $editor -ControlType Edit).Count -eq 9)
+            Test-That 'the editor shows all nine columns' ($missing.Count -eq 0) "missing: $($missing -join ', ')"
+            Test-That 'DetectionMethod is a list' ((Find-UiaElement -Root $editor -AutomationId 'DetectionMethod' -TimeoutSeconds 3).Current.ControlType.ProgrammaticName -match 'ComboBox')
+            Test-That 'DetectionPattern has a hint' ($null -ne (Find-UiaElement -Root $editor -AutomationId 'DetectionPatternHint' -TimeoutSeconds 3))
             foreach ($id in 'FromMsi', 'FromExe', 'FromCatalog') {
                 Test-That "prefill button [$id] is present" ($null -ne (Find-UiaElement -Root $editor -AutomationId $id -TimeoutSeconds 3))
             }
