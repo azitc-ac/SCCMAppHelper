@@ -1,4 +1,4 @@
-"Publisher";"Name";"Version";"DetectionMethod";"DetectionPattern";"ProductCode";"InstallCmd";"UninstallCmd";"Notes"
+﻿"Publisher";"Name";"Version";"DetectionMethod";"DetectionPattern";"ProductCode";"InstallCmd";"UninstallCmd";"Notes"
 "Igor Pavlov";"7-Zip";"26.02.00.0";"MSI";"";"{23170F69-40C1-2702-2602-000001000000}";"";"";"7zip.7zip 26.02 from winget-pkgs (x64, wix)"
 "Microsoft Corporation";"Microsoft SQL Server Management Studio";"22.9.2";"File";"C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\SSMS.exe";"";"$vswhere = ""${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe""
 $installPath = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release'
