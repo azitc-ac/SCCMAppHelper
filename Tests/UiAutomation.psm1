@@ -86,7 +86,7 @@ function Set-UiaText {
 function Get-UiaElement {
     param(
         [Parameter(Mandatory = $true)]$Root,
-        [ValidateSet('Button', 'DataItem', 'Edit', 'Text')][string]$ControlType = 'Button'
+        [ValidateSet('Button', 'DataItem', 'Edit', 'Text', 'ComboBox')][string]$ControlType = 'Button'
     )
 
     $condition = New-Object Windows.Automation.PropertyCondition(
