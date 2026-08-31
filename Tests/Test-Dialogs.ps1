@@ -79,9 +79,9 @@ function Test-CatalogPrefill {
 
     Test-That 'the curated list is not empty' ((Get-UiaElement -Root $catalog -ControlType DataItem).Count -gt 0)
 
-        Test-That 'the catalog dialog offers Remember' ($null -ne (Find-UiaElement -Root $catalog -AutomationId 'Remember' -TimeoutSeconds 3))
+    Test-That 'the catalog dialog offers Remember' ($null -ne (Find-UiaElement -Root $catalog -AutomationId 'Remember' -TimeoutSeconds 3))
 
-$picked = Select-UiaRow -Root $catalog -Match $Package
+    $picked = Select-UiaRow -Root $catalog -Match $Package
     Test-That "[$Package] can be selected" ($null -ne $picked)
     if (-not $picked) { return }
     Invoke-UiaElement -Element (Find-UiaElement -Root $catalog -AutomationId 'Next')

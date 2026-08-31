@@ -411,6 +411,25 @@ The retire workflow removed the throwaway package completely - deployments, cont
 collections, application, folder - which is the first time it ran on an application that had
 all of them.
 
+### Why the catalog has no product name search (measured, 2026-08-31)
+
+The obvious fix - build an index of the repository once and search that - was measured and
+dropped:
+
+* `manifests/k` 3.9 MB in 18 s, 395 publisher/package pairs for 237 publishers - plausible
+* `manifests/a` 12.5 MB in 44 s, 979 pairs - plausible
+* `manifests/m` fails outright about half the time ("unexpected EOF", "connection closed
+  unexpectedly"), and when it does answer returns **373 pairs for 562 publishers** - fewer
+  pairs than publishers, which cannot be complete. `truncated` is `false` in that answer.
+
+GitHub sends incomplete trees without saying so. A search built on that would quietly miss
+packages, which is the same class of defect as the single-page directory listing already fixed
+here. So: the curated list is the searchable part, a package id is resolved directly, the
+repository search matches publishers, and a **Remember** button keeps whatever was found the
+hard way. `Add-CatalogEntry` writes `catalog.json` by hand - `ConvertTo-Json` escapes every
+apostrophe and angle bracket and explodes the layout, and that file is meant to be edited by
+hand.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
