@@ -533,6 +533,112 @@ function Insert-Commands {
     if ($insertedMarkers.Count -gt 0) { Write-Ok ("Code added after: {0}" -f ($insertedMarkers.Keys -join ', ')) }
 }
 
+<#
+    Writes the install or uninstall command from Apps.csv into the PSADT script,
+    inside a marked block that is rewritten on every build.
+
+    It used to be inserted once, when the template was created, and never again -
+    because inserting twice would have produced the command twice. That made the
+    package silently outrank the master list: editing the row changed nothing,
+    and Set-ADTAppMetadata rewrote the file on every build anyway, so the
+    timestamp moved and the command did not. A wrong install command survived
+    every attempt to correct it.
+
+    The block makes rewriting safe, so the row is the source of truth again.
+
+    A package that has no block yet is only written into when its section is
+    still empty. If somebody put a command there by hand it stays, and the
+    difference is reported rather than overwritten - the tool has no business
+    discarding work it did not write.
+#>
+function Set-PackageCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall')][string]$Section,
+        [string]$Command
+    )
+
+    if (-not (Test-Path -LiteralPath $FilePath)) { return 'no script' }
+
+    $marker = switch ($Section) {
+        'Install'   { '## <Perform Installation tasks here>' }
+        'Uninstall' { '## <Perform Uninstallation tasks here>' }
+    }
+    $begin = "        # --- SCCMAppHelper $Section begin - rewritten from Apps.csv on every build ---"
+    $end   = "        # --- SCCMAppHelper $Section end ---"
+
+    $lines = @(Get-Content -LiteralPath $FilePath)
+
+    # Where our blocks are - all of them, so the check for hand written code
+    # below does not trip over a command this tool wrote itself.
+    $ours = @()
+    $blockStart = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].Trim() -like '# --- SCCMAppHelper * begin*') { $blockStart = $i }
+        elseif ($lines[$i].Trim() -like '# --- SCCMAppHelper * end ---' -and $blockStart -ge 0) {
+            $ours += , @($blockStart, $i)
+            $blockStart = -1
+        }
+    }
+
+    $beginAt = -1
+    $endAt   = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].Trim() -eq $begin.Trim()) { $beginAt = $i }
+        if ($lines[$i].Trim() -eq $end.Trim() -and $beginAt -ge 0 -and $endAt -lt 0) { $endAt = $i }
+    }
+
+    $body = @()
+    if ($Command) {
+        $body = @($begin) +
+                @($Command -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { '        ' + $_.Trim() }) +
+                @($end)
+    }
+
+    # --- our block is already there: replace what is between the markers ---
+    if ($beginAt -ge 0 -and $endAt -gt $beginAt) {
+        $current = @()
+        if ($endAt -gt $beginAt + 1) { $current = $lines[($beginAt + 1)..($endAt - 1)] }
+        if ((($current -join "`n").Trim()) -eq (($body | Select-Object -Skip 1 | Select-Object -SkipLast 1) -join "`n").Trim()) {
+            return 'unchanged'
+        }
+
+        $new = @()
+        if ($beginAt -gt 0) { $new += $lines[0..($beginAt - 1)] }
+        $new += $body
+        if ($endAt -lt $lines.Count - 1) { $new += $lines[($endAt + 1)..($lines.Count - 1)] }
+        Set-Content -LiteralPath $FilePath -Value $new -Encoding UTF8
+        return 'replaced'
+    }
+
+    $markerAt = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -like "*$marker*") { $markerAt = $i; break }
+    }
+    if ($markerAt -lt 0) { return 'no marker' }
+    if (-not $Command)   { return 'nothing to write' }
+
+    # --- no block yet: only write when nobody put a command there by hand ---
+    $handWritten = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $inOurs = $false
+        foreach ($range in $ours) { if ($i -ge $range[0] -and $i -le $range[1]) { $inOurs = $true; break } }
+        if ($inOurs) { continue }
+        # The two Start-ADTMsiProcess lines of the stock template are not a
+        # command somebody wrote - they are the zero-config MSI path.
+        if ($lines[$i] -match '^\s*(Start-ADTProcess|Start-ADTMsiProcess|Execute-Process|Execute-MSI)\b' -and
+            $lines[$i] -notmatch 'ExecuteDefaultMSISplat|DefaultMspFiles') { $handWritten += $lines[$i].Trim() }
+    }
+    if ($handWritten.Count -gt 0) { return 'hand written' }
+
+    $new = @()
+    $new += $lines[0..$markerAt]
+    $new += $body
+    if ($markerAt -lt $lines.Count - 1) { $new += $lines[($markerAt + 1)..($lines.Count - 1)] }
+    Set-Content -LiteralPath $FilePath -Value $new -Encoding UTF8
+    return 'inserted'
+}
+
 function New-DetectionScript {
     param(
         [Parameter(Mandatory = $true)]$App,
@@ -765,11 +871,19 @@ function New-AppPackage {
         Write-Ok 'Invoke-AppDeployToolkit.ps1 metadata filled in.'
     }
 
-    # Injecting the command snippets is NOT idempotent, so only do it once.
-    if ($isNewTemplate) {
-        $adtScript = Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'
-        if ($App.InstallCmd)   { Insert-Commands -FilePath $adtScript -Install   ($App.InstallCmd   -split "`r?`n") }
-        if ($App.UninstallCmd) { Insert-Commands -FilePath $adtScript -Uninstall ($App.UninstallCmd -split "`r?`n") }
+    # The commands are rewritten on every build, so the Apps.csv row stays the
+    # source of truth. Correcting a row used to change nothing at all, because
+    # the injection ran once and never again.
+    $adtScript = Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'
+    foreach ($section in 'Install', 'Uninstall') {
+        $command = $(if ($section -eq 'Install') { $App.InstallCmd } else { $App.UninstallCmd })
+        switch (Set-PackageCommand -FilePath $adtScript -Section $section -Command $command) {
+            'replaced'     { Write-Ok   "$section command updated from the app list." }
+            'inserted'     { Write-Ok   "$section command written into the package." }
+            'unchanged'    { Write-Info "$section command already matches the app list." }
+            'hand written' { Write-Warn "The package already holds a command that this tool did not write - leaving it alone. The app list says: $command" }
+            'no marker'    { Write-Info "No $section marker in the PSADT script - nothing written." }
+        }
     }
 
     Write-Ok "Package ready: $packageRoot"
