@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-08-29 (retire workflow, lab cleaned)
+Last updated: 2026-08-31 (a detection evaluated on a real client)
 
 ## Where it stands
 
@@ -345,6 +345,45 @@ reference not set to an instance of an object" in both parameter sets, by name a
 at exactly that broken replacement. The tool keeps the deprecated cmdlet and suppresses the
 warning; do not "fix" this without testing the replacement first.
 
+### A detection evaluated on a real client (rd3, 2026-08-31)
+
+The one thing that had never been shown: everything before this verified the clause ConfigMgr
+*stores*, not that it matches the product on a machine. `7-Zip - 26.02.00.0` was distributed
+and deployed to `rd3.home.local`, which had 26.00 installed.
+
+From the client's own `AppEnforce.log`:
+
+```
++++ Starting Install enforcement for App DT "7-Zip - 26.02.00.0"
+    Performing detection ...  +++ Application not discovered.
+    Executing: "Invoke-AppDeployToolkit.exe" -DeploymentType Install -DeployMode Silent
+    Process 2268 terminated with exitcode: 0
+    Performing detection ...  +++ Discovered application
+++++++ App enforcement completed (12 seconds)
+```
+
+Both directions in one run: the clause said "not installed" with 26.00 present, and "installed"
+after the install. Afterwards the machine holds `7-Zip 26.02 (x64 edition)` under
+`{23170F69-40C1-2702-2602-000001000000}` - the ProductCode the clause checks - and `7z.exe`
+reports 26.02. The site agrees: `enforcement=1000 compliance=1`.
+
+**Supersedence with `supersedenceUninstall` does something after all.** Immediately before the
+install the client uninstalled 26.00 on its own - `App enforcement completed (23 seconds) for
+App DT "7-Zip - 26.00.00.0"`, then `Application not discovered`, and `ActionType - Uninstall`
+in `AppDiscovery.log`. That is the `Changeable="true"` attribute from the very first
+investigation of this session, finally shown to have an effect on a machine. 26.00 now reports
+`enforcement=3000 compliance=2`.
+
+Two things worth knowing for the next time:
+
+* **The site lags the client badly.** The install finished at 13:07:18. The site still reported
+  `enforcement=2000 (in progress)` more than ten minutes later, and hardware inventory still
+  listed 26.00. Polling `SMS_AppDeploymentAssetDetails` is not a way to watch an installation -
+  read `AppEnforce.log` on the client instead.
+* `Invoke-CMClientNotification` only knows `RequestMachinePolicyNow` and `RequestUsersPolicyNow`.
+  The one that matters is `Invoke-CMClientAction -ActionType ClientNotificationAppDeplEvalNow`,
+  and there is a `ClientNotificationRequestHWInvNow` next to it.
+
 `Get-CMDistributionTarget` was listed here as an untested ConfigMgr cmdlet. It is not one -
 it is the tool's own function in `Functions\setup.ps1`.
 
@@ -406,10 +445,10 @@ it is the tool's own function in `Functions\setup.ps1`.
   detection method that has not been run since the rewrite - what is untested there is the
   `CustomSource` branch reading `Content\SupportFiles\detection.ps1` and the signature header
   it prepends.
-* None of the published applications was ever installed on a client, so no detection has been
-  observed *evaluating*. What is verified is the clause ConfigMgr stores, not that it matches
-  the product once it is on a machine. The `Is64Bit` bug is the reminder: the clause looked
-  right and would still have found nothing.
+* Only the MSI clause has been watched evaluating on a client. `Registry` and `File` produce
+  their clauses through the same code, but neither has been observed matching or not matching
+  on a machine - and the `Is64Bit` bug is the reminder that a clause can look right and still
+  find nothing.
 * The legacy packages whose CM application uses **script** detection rather than clauses were
   not tried - `Google Chrome`, `Microsoft Edge`, the Office packages and others. Replacing a
   script detection with a clause is a different operation from replacing a clause, and it has
