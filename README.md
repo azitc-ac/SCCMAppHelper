@@ -90,10 +90,21 @@ repository behind winget, [microsoft/winget-pkgs](https://github.com/microsoft/w
 read directly over HTTPS - the `winget` client itself is **not** used, because it is a per
 user MSIX and is missing on Windows Server 2022.
 
-Searching it has one limitation worth knowing: the repository is keyed by **publisher**
-(`manifests/<letter>/<Publisher>/<Package>`), so a query is matched against publishers. A
-product whose vendor is named differently will not be found by its product name - paste the
-full package id instead, and it is resolved directly.
+### Finding a package
+
+The repository is keyed by **publisher** - `manifests/<letter>/<Publisher>/<Package>` - so it
+cannot be searched by product name. KeePass sits under `DominikReichl`, Visual Studio Code
+under `Microsoft`. Building an index of it does not work either: GitHub answers the tree API
+intermittently and returns incomplete trees without setting its own `truncated` flag.
+
+So there are three ways in, in the order the dialog tries them:
+
+1. The **curated list** in `Configtalog.json` - searched by product name, no request needed.
+2. The **full package id** - anything containing a dot is resolved directly.
+3. The **repository search**, which matches publishers.
+
+Whatever is found the hard way can be kept: **Remember** writes it into `catalog.json`, so it
+is found by name next time. The list is meant to grow.
 
 1. **Pick** from `Config\catalog.json`, or search the repository for anything else.
 2. **Resolve** the newest version, and say which versions of it `Apps.csv` already holds.
