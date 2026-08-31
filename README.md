@@ -127,7 +127,7 @@ intermittently and returns incomplete trees without setting its own `truncated` 
 
 So there are three ways in, in the order the dialog tries them:
 
-1. The **curated list** in `Configtalog.json` - searched by product name, no request needed.
+1. The **curated list** in `Config\catalog.json` - searched by product name, no request needed.
 2. The **full package id** - anything containing a dot is resolved directly.
 3. The **repository search**, which matches publishers.
 
