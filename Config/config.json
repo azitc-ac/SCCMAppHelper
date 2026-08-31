@@ -1,5 +1,5 @@
 {
-    "packageLayout":  "Subfolder",
+    "packageLayout":  "Flat",
     "psadtLogPath":  "C:\\Windows\\CCM\\Logs\\PSADT",
     "packageAuthor":  "",
     "installCommand":  "Invoke-AppDeployToolkit.exe -DeploymentType Install -DeployMode Silent",
