@@ -87,10 +87,10 @@ disabled where nothing belongs in it:
 
 | Method | `DetectionPattern` | Install commands |
 | --- | --- | --- |
-| `MSI` | nothing - the ProductCode column, or the single MSI in `.iles` | empty, psadt deploys the msi itself |
+| `MSI` | nothing - the ProductCode column, or the single MSI in `.\Files` | empty, PSADT deploys the MSI itself |
 | `Registry` | the uninstall key | yours |
 | `File` | the full path of the installed file | yours |
-| `Script` | nothing - `ContentSupportFilesdetection.ps1` | yours |
+| `Script` | nothing - `Content\SupportFiles\detection.ps1` | yours |
 
 ## From catalog
 
