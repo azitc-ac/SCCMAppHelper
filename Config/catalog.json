@@ -19,6 +19,15 @@
         { "name": "SQL Server Management Studio", "packageId": "Microsoft.SQLServerManagementStudio" },
         { "name": "Remote Desktop Manager",    "packageId": "Devolutions.RemoteDesktopManager" },
         { "name": "TeamViewer",                "packageId": "TeamViewer.TeamViewer" },
-        { "name": "Zoom",                      "packageId": "Zoom.Zoom" }
+        { "name": "Zoom",                      "packageId": "Zoom.Zoom" },
+        { "name": "Process Explorer",       "packageId": "Microsoft.Sysinternals.ProcessExplorer" },
+        { "name": "Sysinternals Suite",     "packageId": "Microsoft.Sysinternals.Suite" },
+        { "name": "Windows Terminal",       "packageId": "Microsoft.WindowsTerminal" },
+        { "name": "Microsoft Edge",         "packageId": "Microsoft.Edge" },
+        { "name": "Foxit PDF Reader",       "packageId": "Foxit.FoxitReader" },
+        { "name": "IrfanView",              "packageId": "IrfanSkiljan.IrfanView" },
+        { "name": "WinMerge",               "packageId": "WinMerge.WinMerge" },
+        { "name": "Wireshark",              "packageId": "WiresharkFoundation.Wireshark" },
+        { "name": "mRemoteNG",              "packageId": "mRemoteNG.mRemoteNG" }
     ]
 }

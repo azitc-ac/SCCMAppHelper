@@ -277,6 +277,41 @@ function Get-ExeProperties {
     }
 }
 
+<#
+    Empties the two command fields and says why.
+
+    A package whose detection is MSI is a zero-config PSADT package: the session
+    block stays empty and PSADT installs the single MSI in .\Files itself. An
+    install command on top of that runs the installation twice, so the fields are
+    cleared rather than filled, and the reason is put where the user will look
+    for it.
+#>
+function Clear-CommandFields {
+    param([Parameter(Mandatory = $true)][hashtable]$TextBoxes)
+
+    foreach ($key in 'InstallCmd', 'UninstallCmd') {
+        if (-not $TextBoxes.Contains($key)) { continue }
+        $TextBoxes[$key].Text = ''
+        $TextBoxes[$key].IsEnabled = $false
+        $TextBoxes[$key].Background = [System.Windows.Media.Brushes]::WhiteSmoke
+        $TextBoxes[$key].ToolTip = 'Handled by the PSADT zero-config MSI deployment - leave empty.'
+    }
+}
+
+<#
+    Re-enables the command fields when the detection is not MSI any more.
+#>
+function Enable-CommandFields {
+    param([Parameter(Mandatory = $true)][hashtable]$TextBoxes)
+
+    foreach ($key in 'InstallCmd', 'UninstallCmd') {
+        if (-not $TextBoxes.Contains($key)) { continue }
+        $TextBoxes[$key].IsEnabled = $true
+        $TextBoxes[$key].Background = [System.Windows.Media.Brushes]::White
+        $TextBoxes[$key].ToolTip = $null
+    }
+}
+
 function Set-IfPresent {
     param(
         [Parameter(Mandatory = $true)][hashtable]$TextBoxes,
@@ -373,6 +408,19 @@ function Open-EditDialog {
 
     $null = $stackPanel.Children.Add($fieldGrid)
 
+    # The command fields follow the detection method. MSI means the package is a
+    # zero-config PSADT package, so the commands have to stay empty - the fields
+    # are greyed out and say so rather than silently accepting something that
+    # would install the product twice.
+    if ($textBoxes.Contains('DetectionMethod')) {
+        $syncCommandFields = {
+            if ($textBoxes['DetectionMethod'].Text.Trim() -eq 'MSI') { Clear-CommandFields  -TextBoxes $textBoxes }
+            else                                                     { Enable-CommandFields -TextBoxes $textBoxes }
+        }
+        & $syncCommandFields
+        $textBoxes['DetectionMethod'].Add_TextChanged($syncCommandFields)
+    }
+
     # Prefill from a setup file - this replaces add-NewMSIToAppsCSV.ps1 and is
     # what keeps the naming in Apps.csv unambiguous.
     $msiButton = New-Object Windows.Controls.Button
@@ -392,8 +440,11 @@ function Open-EditDialog {
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('Publisher', 'Vendor', 'Manufacturer') -Value $props['Manufacturer']
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('ProductCode')                         -Value $props['ProductCode']
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('DetectionMethod')                     -Value 'MSI'
-                Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('InstallCmd')   -Value ("Start-ADTMsiProcess -Action 'Install' -FilePath '{0}'" -f (Split-Path -Leaf $ofd.FileName))
-                Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('UninstallCmd') -Value ("Start-ADTMsiProcess -Action 'Uninstall' -ProductCode '{0}'" -f $props['ProductCode'])
+
+                # No install commands for an MSI. PSADT deploys the single MSI in
+                # .\Files by itself as long as the session block stays empty, and
+                # an injected Start-ADTMsiProcess would install it a second time.
+                Clear-CommandFields -TextBoxes $textBoxes
             }
         }
         catch { $null = Show-MessageDialog -Text ("MSI could not be read: {0}" -f $_.Exception.Message) -Caption 'MSI' -Buttons 'OK' -Icon 'Error' }
@@ -1090,16 +1141,30 @@ function Show-CatalogDialog {
     $searchButton.Add_Click({
         $query = $searchBox.Text
         if ([string]::IsNullOrWhiteSpace($query)) { $dataGrid.ItemsSource = @($Packages); return }
+
+        # The curated list first: it is already here, it matches on the product
+        # name, and it covers the everyday case. Only what it does not know is
+        # worth a request.
+        $local = @($Packages | Where-Object { $_.name -like "*$query*" -or $_.packageId -like "*$query*" } |
+                        ForEach-Object { [pscustomobject]@{ Name = $_.name; PackageId = $_.packageId } })
+        if ($local.Count -gt 0) { $dataGrid.ItemsSource = $local; return }
+
         $window.Cursor = 'Wait'
         try {
-            $found = Find-CatalogPackage -Query $query
-            if (@($found).Count -eq 0) {
-                $null = Show-MessageDialog -Text "Nothing found for [$query]." -Caption 'New from catalog' -Buttons 'OK' -Icon 'Information'
+            $found = @(Find-CatalogPackage -Query $query)
+            if ($found.Count -eq 0) {
+                $null = Show-MessageDialog -Owner $window -Caption 'New from catalog' -Buttons 'OK' -Icon 'Information' -Text (
+                    "Nothing found for [$query].`n`n" +
+                    "The repository is organised by publisher, not by product: a package lives under " +
+                    "manifests\<letter>\<Publisher>\<Package>, and the letter is the publisher's. " +
+                    "Searching for a product whose vendor is named differently cannot work - KeePass sits " +
+                    "under DominikReichl, Visual Studio Code under Microsoft.`n`n" +
+                    "Try the vendor name, or paste the full package id (it contains a dot) and it is taken as it is.")
             }
-            $dataGrid.ItemsSource = @($found)
+            $dataGrid.ItemsSource = $found
         }
         catch {
-            $null = Show-MessageDialog -Text $_.Exception.Message -Caption 'New from catalog' -Buttons 'OK' -Icon 'Warning'
+            $null = Show-MessageDialog -Text $_.Exception.Message -Caption 'New from catalog' -Buttons 'OK' -Icon 'Warning' -Owner $window
         }
         finally { $window.Cursor = 'Arrow' }
     })
