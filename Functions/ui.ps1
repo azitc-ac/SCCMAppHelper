@@ -1130,6 +1130,31 @@ function Show-CatalogDialog {
     $cancelButton = New-Object Windows.Controls.Button
     $cancelButton.Content = 'Cancel'; $cancelButton.Padding = '18,6'; $cancelButton.IsCancel = $true
     [Windows.Automation.AutomationProperties]::SetAutomationId($cancelButton, 'Cancel')
+    # Anything found through the repository can be kept, so the curated list -
+    # the only part that can be searched by product name - grows with use
+    # instead of staying whatever it was the day it was written.
+    $rememberButton = New-Object Windows.Controls.Button
+    $rememberButton.Content = 'Remember'
+    $rememberButton.Padding = '18,6'
+    $rememberButton.Margin = '0,0,8,0'
+    $rememberButton.ToolTip = 'Add the selected package to Config\catalog.json'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($rememberButton, 'Remember')
+    $rememberButton.Add_Click({
+        $picked = $dataGrid.SelectedItem
+        if (-not $picked) {
+            $null = Show-MessageDialog -Text 'Nothing selected.' -Caption 'New from catalog' -Buttons 'OK' -Icon 'Information' -Owner $window
+            return
+        }
+        try {
+            $added = Add-CatalogEntry -Name ([string]$picked.Name) -PackageId ([string]$picked.PackageId)
+            $null = Show-MessageDialog -Owner $window -Caption 'New from catalog' -Buttons 'OK' -Icon 'Information' -Text $(
+                if ($added) { "$($picked.PackageId) is in the catalog now, and will be found by name next time." }
+                else        { "$($picked.PackageId) was already in the catalog." })
+        }
+        catch { $null = Show-MessageDialog -Text $_.Exception.Message -Caption 'New from catalog' -Buttons 'OK' -Icon 'Warning' -Owner $window }
+    })
+
+    $null = $buttons.Children.Add($rememberButton)
     $null = $buttons.Children.Add($okButton)
     $null = $buttons.Children.Add($cancelButton)
     [Windows.Controls.Grid]::SetRow($buttons, 2)
