@@ -589,6 +589,51 @@ function ConvertTo-CatalogAppRow {
 
 #region ------------------------------------------------------------- the search
 
+<#
+    Appends a package to catalog.json, so the list grows with use.
+
+    The repository cannot be searched by product name - it is keyed by publisher,
+    and building an index of it does not hold up: the tree API answers
+    intermittently and, when it does answer, comes back incomplete without
+    setting its own truncated flag (373 publisher/package pairs for a letter
+    holding 562 publishers). So the curated list is the searchable part, and
+    anything found the hard way once should not have to be found that way again.
+#>
+function Add-CatalogEntry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$PackageId,
+        [string]$Path = (Join-Path $rootDir 'Config\catalog.json')
+    )
+
+    $catalog = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    if (@($catalog.packages | Where-Object { $_.packageId -eq $PackageId }).Count -gt 0) {
+        Write-Info "Already in the catalog: $PackageId"
+        return $false
+    }
+
+    $entries = @($catalog.packages) + [pscustomobject]@{ name = $Name; packageId = $PackageId }
+
+    # Written by hand rather than with ConvertTo-Json: this file is meant to be
+    # edited by hand, and ConvertTo-Json escapes every apostrophe and angle
+    # bracket into ' and > and puts each property on its own line.
+    $width = 3 + ($entries | ForEach-Object { [string]$_.name } | Measure-Object -Property Length -Maximum).Maximum
+    $lines = foreach ($entry in $entries) {
+        $label = ('"' + $entry.name + '",').PadRight($width)
+        '        { "name": ' + $label + ' "packageId": "' + $entry.packageId + '" }'
+    }
+
+    $json = '{' + [Environment]::NewLine +
+            ('    "comment": "{0}",' -f $catalog.comment) + [Environment]::NewLine +
+            '    "packages": [' + [Environment]::NewLine +
+            (($lines -join (',' + [Environment]::NewLine))) + [Environment]::NewLine +
+            '    ]' + [Environment]::NewLine + '}' + [Environment]::NewLine
+
+    Set-Content -LiteralPath $Path -Value $json -Encoding UTF8
+    Write-Ok "Added to the catalog: $Name ($PackageId)"
+    return $true
+}
+
 function Get-CatalogList {
     param([string]$Path = (Join-Path $rootDir 'Config\catalog.json'))
 
