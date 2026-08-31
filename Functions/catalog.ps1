@@ -339,8 +339,22 @@ function Get-CatalogManifest {
 function Select-CatalogInstaller {
     param(
         [Parameter(Mandatory = $true)]$Installers,
-        [string]$Architecture = 'x64'
+        [string]$Architecture = 'x64',
+        $Root
     )
+
+    # A manifest may state InstallerType, InstallerSwitches, Scope and the rest
+    # once at the top and let every installer inherit them - Visual Studio Code
+    # does exactly that. Reading only the installer entry then leaves the type
+    # blank, which throws off the ranking, and loses the silent switch, which is
+    # what the install command is built from.
+    if ($Root) {
+        foreach ($entry in @($Installers)) {
+            foreach ($key in 'InstallerType', 'InstallerSwitches', 'Scope', 'UpgradeBehavior', 'ProductCode', 'AppsAndFeaturesEntries') {
+                if (-not $entry.Contains($key) -and $Root.Contains($key)) { $entry[$key] = $Root[$key] }
+            }
+        }
+    }
 
     $typeRank = @{ 'wix' = 0; 'msi' = 1; 'burn' = 2; 'inno' = 3; 'nullsoft' = 4; 'exe' = 5; 'msix' = 6; 'appx' = 7; 'zip' = 9 }
     $archRank = @{ 'x64' = 0; 'neutral' = 1; 'x86' = 2; 'arm64' = 3; 'arm' = 4 }
@@ -519,6 +533,42 @@ function ConvertTo-CatalogAppRow {
         }
     }
 
+    # A manifest only states a silent switch where the installer needs an unusual
+    # one. For the common installer kinds it is a property of the kind, and
+    # winget knows it rather than repeating it in every manifest - Inno Setup and
+    # NSIS packages carry no switches at all. So the same defaults are applied
+    # here, or the command would come out unable to install silently.
+    if (-not $switches) {
+        $switches = switch ($Installer.InstallerType) {
+            'inno'     { '/VERYSILENT /NORESTART' }
+            'nullsoft' { '/S' }
+            'burn'     { '/quiet /norestart' }
+            default    { '' }
+        }
+    }
+
+    # An MSI package needs no commands at all - PSADT deploys the single MSI in
+    # .\Files itself, and anything here would install it a second time. Anything
+    # else does need them, and the manifest usually knows the silent switch, so
+    # the row comes out ready to package instead of ready to fill in by hand.
+    $installCommand   = ''
+    $uninstallCommand = ''
+    if ($detectionMethod -ne 'MSI') {
+        $fileName = Split-Path -Leaf ([uri]$Installer.InstallerUrl).LocalPath
+        $installCommand = if ($switches) {
+            "Start-ADTProcess -FilePath '$fileName' -ArgumentList '$switches'"
+        }
+        else {
+            "Start-ADTProcess -FilePath '$fileName'   # no silent switch in the manifest - check it"
+        }
+
+        # An uninstall string is only guessable from the ProductCode, which a
+        # non-MSI installer usually does not have.
+        if ($productCode -match '^\{.+\}$') {
+            $uninstallCommand = "Start-ADTMsiProcess -Action 'Uninstall' -ProductCode '$productCode'"
+        }
+    }
+
     return [pscustomobject]@{
         Publisher        = $publisher
         Name             = $name
@@ -526,8 +576,8 @@ function ConvertTo-CatalogAppRow {
         DetectionMethod  = $detectionMethod
         DetectionPattern = $detectionPattern
         ProductCode      = $productCode
-        InstallCmd       = ''
-        UninstallCmd     = ''
+        InstallCmd       = $installCommand
+        UninstallCmd     = $uninstallCommand
         Notes            = ('{0} {1} from winget-pkgs ({2}, {3}){4}' -f
                                 $Manifest.PackageIdentifier, $Manifest.PackageVersion,
                                 $Installer.Architecture, $Installer.InstallerType,
@@ -639,7 +689,7 @@ function Read-CatalogPackage {
     }
 
     $manifest   = Get-CatalogManifest -PackageIdentifier $selection.PackageId -Version $latest
-    $installers = Select-CatalogInstaller -Installers $manifest.Installers
+    $installers = Select-CatalogInstaller -Installers $manifest.Installers -Root $manifest.Root
     $installer  = $installers[0]
 
     if ($installers.Count -gt 1) {
