@@ -443,12 +443,25 @@ function Open-EditDialog {
     # are greyed out and say so rather than silently accepting something that
     # would install the product twice.
     if ($textBoxes.Contains('DetectionMethod')) {
+        # Each hint says two things: what belongs in the field, and what the tool
+        # builds out of it. The second half matters as much as the first - the
+        # rule that reaches ConfigMgr is assembled from this field, the Version
+        # column and nothing else, and none of that is visible here otherwise.
         $hints = @{
-            'Registry' = 'The uninstall key. A bare name is taken below SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall, a value starting with SOFTWARE\ is used as it is. Example: {23170F69-40C1-2702-2602-000001000000} or 7-Zip. Left empty, the ProductCode of the single MSI in .\Files is used.'
-            'MSI'      = 'Nothing needed - detection is by ProductCode, taken from the column beside this one or read from the single MSI in .\Files.'
-            'File'     = 'The full path of the installed file, environment variables included. Example: %ProgramFiles%\Notepad++\notepad++.exe'
-            'Script'   = 'Nothing needed - the detection script is read from Content\SupportFiles\detection.ps1 inside the package.'
+            'Registry' = 'Put in the uninstall key: a bare name is taken below SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall, a value starting with SOFTWARE\ is used as it is, and empty falls back to the ProductCode of the single MSI in .\Files. Examples: 7-Zip, or {23170F69-40C1-2702-2602-000001000000}.' + [Environment]::NewLine +
+                         'Becomes: DisplayVersion greater or equal to the Version column, checked in the 64 bit and the 32 bit registry view and joined with Or.'
+            'MSI'      = 'Nothing to put in - the ProductCode comes from the column beside this one, or is read from the single MSI in .\Files.' + [Environment]::NewLine +
+                         'Becomes: Windows Installer ProductVersion greater or equal to the Version column.'
+            'File'     = 'Put in the full path of the installed file, environment variables included. Example: %ProgramFiles%\Notepad++\notepad++.exe' + [Environment]::NewLine +
+                         'Becomes: path and file name split for you, file version greater or equal to the Version column. A path holding a variable is checked in both the 64 bit and the 32 bit view; a literal path only in the 64 bit one.'
+            'Script'   = 'Nothing to put in - the script is read from Content\SupportFiles\detection.ps1 inside the package.' + [Environment]::NewLine +
+                         'Becomes: that script, unchanged, as the deployment type detection, with the tool signature prepended.'
         }
+
+        # Everything above compares against the Version column, so what happens
+        # when it is not a version has to be said once.
+        $existenceNote = [Environment]::NewLine +
+                         'If the Version column is not a comparable version - "19c" and the like - the rule becomes a plain existence check instead.'
 
         $syncMethod = {
             $method = $textBoxes['DetectionMethod'].Text
@@ -457,11 +470,15 @@ function Open-EditDialog {
             if ($method -eq 'MSI') { Clear-CommandFields -TextBoxes $textBoxes }
             else                   { Enable-CommandFields -TextBoxes $textBoxes }
 
-            if ($script:PatternHint) {
-                $script:PatternHint.Text = $(if ($hints.ContainsKey($method)) { $hints[$method] } else { '' })
+            $hint = ''
+            if ($hints.ContainsKey($method)) {
+                $hint = $hints[$method]
+                if ($method -ne 'Script') { $hint += $existenceNote }
             }
+
+            if ($script:PatternHint) { $script:PatternHint.Text = $hint }
             if ($textBoxes.Contains('DetectionPattern')) {
-                $textBoxes['DetectionPattern'].ToolTip = $(if ($hints.ContainsKey($method)) { $hints[$method] } else { $null })
+                $textBoxes['DetectionPattern'].ToolTip = $(if ($hint) { $hint } else { $null })
                 $textBoxes['DetectionPattern'].IsEnabled = ($method -notin 'MSI', 'Script')
             }
         }
