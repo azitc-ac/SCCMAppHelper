@@ -64,8 +64,8 @@ deployment type name and the base for every collection name.
 | `DetectionMethod` | `Registry` (default), `MSI`, `File` or `Script` |
 | `DetectionPattern` | `Registry`: uninstall key (empty = the ProductCode) - `File`: full path of the file to check |
 | `ProductCode` | MSI ProductCode for `DetectionMethod = MSI` |
-| `InstallCmd` | Optional PSADT code inserted into the install section |
-| `UninstallCmd` | Optional PSADT code inserted into the uninstall section |
+| `InstallCmd` | Optional PSADT code for the install section |
+| `UninstallCmd` | Optional PSADT code for the uninstall section |
 | `Notes` | Free text, used as the application description |
 
 Only `Publisher`, `Name` and `Version` are required - an older three column `apps.csv` is
@@ -80,6 +80,23 @@ buttons:
 * **From catalog...** picks the file first - see below - and then reads it the same way.
 
 That replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
+
+`InstallCmd` and `UninstallCmd` are written into the PSADT script inside a marked block:
+
+```powershell
+## <Perform Installation tasks here>
+        # --- SCCMAppHelper Install begin - rewritten from Apps.csv on every build ---
+        Start-ADTProcess -FilePath "setup.exe" -ArgumentList '--quiet --norestart --wait'
+        # --- SCCMAppHelper Install end ---
+```
+
+The block is rewritten on every build, so correcting a row reaches the package. Without it the
+code could only be inserted once - inserting twice would have produced the command twice - and
+the package quietly outranked the master list: editing the row changed nothing, while the file
+was rewritten for its metadata anyway, so the timestamp moved and the command did not.
+
+A package built before this has no block. It is written into only when its section is still
+empty; a command somebody put there by hand stays, and the difference is reported instead.
 
 `DetectionMethod` is a list rather than a free text field, and what `DetectionPattern` has to
 contain depends on it - so the hint under the field follows the method, and the field is
