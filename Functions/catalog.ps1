@@ -1,4 +1,4 @@
-<#
+﻿<#
     SCCMAppHelper - application catalog
 
     Reads the manifests of https://github.com/microsoft/winget-pkgs directly
