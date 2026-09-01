@@ -61,6 +61,14 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
 
+## Path length in the list (2026-09-01)
+
+`Measure-ContentPath` walks a package once (metadata only) and returns the longest UNC path,
+the number of files past 259 and the worst one. `Get-AppPackage` runs it for every package
+on the share, so the list shows `Path too long` before anyone publishes; `New-AppPackage`
+runs it after the installer is in place and warns, and `Add-AppFromSource` says it in a
+message. The publish-time refusal stays as the last line of defence.
+
 ## The official winget index (2026-09-01, not yet run on Windows)
 
 `Functions\wingetindex.ps1` fetches `https://cdn.winget.microsoft.com/cache/source.msix`,

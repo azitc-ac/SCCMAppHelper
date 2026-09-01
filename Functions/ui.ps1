@@ -76,7 +76,8 @@ function Show-InventoryDialog {
         [pscustomobject]@{ Name = 'Changed since publishing';           Test = { $_.SourceChanged } },
         [pscustomobject]@{ Name = 'Definition only';                    Test = { $_.HasDefinition -and -not $_.HasPackage -and -not $_.IsPublished } },
         [pscustomobject]@{ Name = 'Without definition';                 Test = { -not $_.HasDefinition } },
-        [pscustomobject]@{ Name = 'Legacy (no PSADT)';                  Test = { $_.IsLegacy } }
+        [pscustomobject]@{ Name = 'Legacy (no PSADT)';                  Test = { $_.IsLegacy } },
+        [pscustomobject]@{ Name = 'Path too long';                      Test = { $_.OverlongFiles -gt 0 } }
     )
     $viewLabel = New-Object Windows.Controls.TextBlock
     $viewLabel.Text = 'Show:'
@@ -137,6 +138,7 @@ function Show-InventoryDialog {
                 foreach ($pair in @(
                         @('Published', 'DarkGreen'),
                         @('Ready to publish', 'DodgerBlue'),
+                        @('Path too long', 'DarkOrange'),
                         @('Published, changed', 'DarkOrange'),
                         @('Published, no package', 'DarkOrange'),
                         @('No installer', 'DarkOrange'),
