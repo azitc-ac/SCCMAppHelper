@@ -1,75 +1,77 @@
 {
-    "packageLayout":  "Flat",
-    "psadtLogPath":  "C:\\Windows\\CCM\\Logs\\PSADT",
-    "packageAuthor":  "",
-    "installCommand":  "Invoke-AppDeployToolkit.exe -DeploymentType Install -DeployMode Silent",
-    "uninstallCommand":  "Invoke-AppDeployToolkit.exe -DeploymentType Uninstall -DeployMode Silent",
-    "maximumRuntimeMins":  120,
-    "estimatedRuntimeMins":  15,
-    "supersedeOlderVersions":  true,
-    "supersedenceUninstall":  true,
-    "distributeContent":  true,
-    "createDeployments":  true,
-    "openExplorerOnCreate":  true,
-    "openEditorOnCreate":  true,
-    "editor":  "powershell_ise",
-    "removeExistingPackageDirOnEachRun":  false,
-    "outdatedAppsCollectionName":  "flt-dev--Veraltete Apps",
-    "roleCollectionPattern":  "rol-dev-*",
-    "appCollectionPattern":  "ins-*",
-    "collections":  [
-                        {
-                            "namePattern":  "ins-req-dev-{App}",
-                            "deployPurpose":  "Required",
-                            "userNotification":  "DisplayAll"
-                        },
-                        {
-                            "namePattern":  "ins-avl-dev-{App}",
-                            "deployPurpose":  "Available",
-                            "userNotification":  "DisplayAll"
-                        }
-                    ],
-    "globalDeployments":  [
-                              {
-                                  "collectionName":  "ins-avl-dev-ALLE APPS",
-                                  "deployPurpose":  "Available",
-                                  "userNotification":  "DisplayAll"
-                              }
-                          ],
-    "collectionUpdatePatterns":  [
-                                     "ins-req-dev-*",
-                                     "flt-dev-*",
-                                     "rol-dev-*"
-                                 ],
-    "sites":  [
-                  {
-                      "name":  "CREM (CCL)",
-                      "siteCode":  "CCL",
-                      "siteServer":  "VMSCCM",
-                      "sqlServer":  "VMSCCM",
-                      "database":  "",
-                      "sourceRoot":  "\\\\VMSCCM\\Sources\\Applications",
-                      "sourceRootLocal":  "E:\\Sources\\Applications",
-                      "distributionPointName":  "VMSCCM.CREM-CLOUD.DE",
-                      "distributionPointGroupName":  "",
-                      "limitingCollectionName":  "All Systems",
-                      "applicationFolderPath":  "",
-                      "collectionFolderPath":  ""
-                  },
-                  {
-                      "name":  "AZI (CM1.home.local)",
-                      "siteCode":  "AZI",
-                      "siteServer":  "CM1.home.local",
-                      "sqlServer":  "CM1.home.local",
-                      "database":  "CM_AZI",
-                      "sourceRoot":  "\\\\CM1.home.local\\Sources\\Applications",
-                      "sourceRootLocal":  "C:\\Sources\\Applications",
-                      "distributionPointName":  "CM1.home.local",
-                      "distributionPointGroupName":  "",
-                      "limitingCollectionName":  "All Systems",
-                      "applicationFolderPath":  "",
-                      "collectionFolderPath":  "Deployment\\Software"
-                  }
-              ],
-    "activeSite":  "AZI (CM1.home.local)"
+    "packageLayout": "Flat",
+    "psadtLogPath": "C:\\Windows\\CCM\\Logs\\PSADT",
+    "packageAuthor": "",
+    "installCommand": "Invoke-AppDeployToolkit.exe -DeploymentType Install -DeployMode Silent",
+    "uninstallCommand": "Invoke-AppDeployToolkit.exe -DeploymentType Uninstall -DeployMode Silent",
+    "maximumRuntimeMins": 120,
+    "estimatedRuntimeMins": 15,
+    "supersedeOlderVersions": true,
+    "supersedenceUninstall": true,
+    "distributeContent": true,
+    "createDeployments": true,
+    "openExplorerOnCreate": true,
+    "openEditorOnCreate": true,
+    "editor": "powershell_ise",
+    "removeExistingPackageDirOnEachRun": false,
+    "outdatedAppsCollectionName": "flt-dev--Veraltete Apps",
+    "roleCollectionPattern": "rol-dev-*",
+    "appCollectionPattern": "ins-*",
+    "collections": [
+        {
+            "namePattern": "ins-req-dev-{App}",
+            "deployPurpose": "Required",
+            "userNotification": "DisplayAll",
+            "folderPath": ""
+        },
+        {
+            "namePattern": "ins-avl-dev-{App}",
+            "deployPurpose": "Available",
+            "userNotification": "DisplayAll",
+            "folderPath": ""
+        }
+    ],
+    "globalDeployments": [
+        {
+            "collectionName": "ins-avl-dev-ALLE APPS",
+            "deployPurpose": "Available",
+            "userNotification": "DisplayAll"
+        }
+    ],
+    "collectionUpdatePatterns": [
+        "ins-req-dev-*",
+        "flt-dev-*",
+        "rol-dev-*"
+    ],
+    "sites": [
+        {
+            "name": "CREM (CCL)",
+            "siteCode": "CCL",
+            "siteServer": "VMSCCM",
+            "sqlServer": "VMSCCM",
+            "database": "",
+            "sourceRoot": "\\\\VMSCCM\\Sources\\Applications",
+            "sourceRootLocal": "E:\\Sources\\Applications",
+            "distributionPointName": "VMSCCM.CREM-CLOUD.DE",
+            "distributionPointGroupName": "",
+            "limitingCollectionName": "All Systems",
+            "applicationFolderPath": "",
+            "collectionFolderPath": ""
+        },
+        {
+            "name": "AZI (CM1.home.local)",
+            "siteCode": "AZI",
+            "siteServer": "CM1.home.local",
+            "sqlServer": "CM1.home.local",
+            "database": "CM_AZI",
+            "sourceRoot": "\\\\CM1.home.local\\Sources\\Applications",
+            "sourceRootLocal": "C:\\Sources\\Applications",
+            "distributionPointName": "CM1.home.local",
+            "distributionPointGroupName": "",
+            "limitingCollectionName": "All Systems",
+            "applicationFolderPath": "",
+            "collectionFolderPath": "Deployment\\Software"
+        }
+    ],
+    "activeSite": "AZI (CM1.home.local)"
 }
