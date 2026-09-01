@@ -1,4 +1,4 @@
-<#
+﻿<#
     SCCMAppHelper - core functions
     https://blog.zarenko.net
 
@@ -350,7 +350,7 @@ function Update-AppListSchema {
         $header = Get-Content -LiteralPath $CsvPath -TotalCount 1 -ErrorAction SilentlyContinue
     }
 
-    if (-not $header -or [string]::IsNullOrWhiteSpace(($header -replace '﻿', ''))) {
+    if (-not $header -or [string]::IsNullOrWhiteSpace(($header -replace [char]0xFEFF, ''))) {
         Write-Warn "App list is empty, writing the column header: $CsvPath"
         Set-Content -LiteralPath $CsvPath -Value ('"' + ($script:AppListColumns -join '";"') + '"') -Encoding UTF8
         return

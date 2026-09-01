@@ -1,4 +1,4 @@
-<#
+﻿<#
     SCCMAppHelper - WPF dialogs
     Adapted from IntuneWin32Helper so both tools feel the same.
 #>

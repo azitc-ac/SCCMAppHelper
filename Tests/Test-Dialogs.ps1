@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Drives the SCCMAppHelper dialogs through UI Automation.
 
