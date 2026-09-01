@@ -49,21 +49,30 @@ The assistant is also available later under **Tools -> Add ConfigMgr site**, and
 
 ### The main window
 
-One row per application, joined from three places:
+One row per application, joined from three places - `Apps.csv`, the package folder
+`<Name> - <Version>` on the source share, and the application in ConfigMgr - and five columns:
+Application, Version, Publisher, **Status** and **Site**. The status says how far the row has
+come and what is in the way, checked in this order:
 
-| Column | Where it comes from | Values |
+| Status | Meaning | Next step |
 | --- | --- | --- |
-| **Definition** | a row in `Apps.csv` | `Yes`, or `-` for a package folder the list does not know |
-| **Package** | the folder `<Name> - <Version>` on the source share | `-` none, `No files` (nothing in `Files\`), `Ready`, `Legacy` (no PSADT script inside) |
-| **PSADT** | the toolkit generation of the package | `4` (`Invoke-AppDeployToolkit.ps1`) or `3` (`Deploy-Application.ps1`) |
-| **Site** | the application in ConfigMgr | `Not published`, `Published`, `Published, source changed`, `Foreign` |
-| **Content** | distribution status of its content | `On 1 DP`, `In progress`, `Error`, `Not distributed` |
-| **Deployments** | number of deployments of the application | |
+| `Legacy` | a folder without a PSADT script inside | add the application afresh |
+| `Foreign` | an application of that name exists, but this tool did not create it; publishing overwrites its detection | |
+| `Published, no package` | published by this tool, the folder is gone | retire, or build again |
+| `Published, changed` | the package folder differs from what the site last received | publish again |
+| `Published` | all in step | |
+| `No installer` | a package, but nothing in `Files\` | put the installer in |
+| `Ready to publish` | a package with content, not on the site | publish |
+| `Definition only` | a row without a package | build |
 
-`Published, source changed` means the package folder differs from what the site last received -
-the deployment type remembers a fingerprint of the content, and the folder is compared against
-it. `Foreign` is an application of the same name that this tool did not create; publishing
-overwrites its detection. The row tooltip spells the three states out.
+`Published, changed` comes from the fingerprint of the content the deployment type remembers,
+compared against the folder. The **Site** column carries the numbers: deployments, and where
+the content is (`on 1 DP`, `in progress`, `content error`, `not distributed`).
+
+Everything else about a row - definition, package path, PSADT generation, files, modified,
+the exact site state - is in the row tooltip and at the top of the dialog a double click
+opens, above the fields of the definition. A legacy folder opens the same dialog with the
+facts only.
 
 The share is read every time the window opens, and so is the site: three calls, one for the
 applications, one for the deployments, one for the distribution status. On a large site that
@@ -81,7 +90,7 @@ The buttons follow the state of the selected rows:
 | --- | --- |
 | **Add...** | A new application, from **winget**, from an **installer file**, or as a **blank record** - see below |
 | **New version...** | The selected application in a newer version: resolved from winget again, or from a file, with the detection somebody already worked out carried over |
-| **Edit** | Edits the definition; a package that exists is rebuilt from it, so the row stays the source of truth |
+| **Edit** | Opens the application: the facts on top, the definition below. A package that exists is rebuilt from the edited row, so the row stays the source of truth |
 | **Delete definition** | Removes the row from `Apps.csv` - the package folder and the application stay |
 | **Build package** | Creates the package on the share from the definition, or takes over a package folder the list does not know |
 | **Publish** | Creates or updates the ConfigMgr application: deployment type, detection, content, collections, deployments, supersedence. A row without a package is built first |

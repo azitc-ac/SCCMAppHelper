@@ -195,6 +195,8 @@ function Get-AppInventory {
             Site           = 'Unknown'
             Content        = ''
             Deployments    = ''
+            Status         = ''
+            SiteInfo       = ''
             Detail         = ''
             Row            = $null
         }
@@ -278,6 +280,30 @@ function Get-AppInventory {
 
     foreach ($row in $rows.Values) {
         if ($siteRead -and -not $row.IsPublished) { $row.Site = 'Not published' }
+
+        # One word for how far the row has come and whether something is in
+        # the way - checked in the order that matters, so the first thing that
+        # needs doing is what is shown.
+        $row.Status =
+            if     ($row.IsLegacy)                                    { 'Legacy' }
+            elseif ($row.IsPublished -and $row.Origin -ne 'this tool') { 'Foreign' }
+            elseif ($row.IsPublished -and -not $row.HasPackage)        { 'Published, no package' }
+            elseif ($row.IsPublished -and $row.SourceChanged)          { 'Published, changed' }
+            elseif ($row.IsPublished)                                  { 'Published' }
+            elseif ($row.HasPackage -and $row.FilesCount -eq 0)        { 'No installer' }
+            elseif ($row.HasPackage)                                   { 'Ready to publish' }
+            else                                                       { 'Definition only' }
+
+        # What the site says in numbers, in one cell.
+        if (-not $siteRead)            { $row.SiteInfo = 'not read' }
+        elseif (-not $row.IsPublished) { $row.SiteInfo = '' }
+        else {
+            $deployments = switch ([int]$row.Deployments) { 0 { 'no deployments' } 1 { '1 deployment' } default { "$_ deployments" } }
+            $content = [string]$row.Content
+            if ($content) { $content = $content.Substring(0, 1).ToLower() + $content.Substring(1) }
+            if ($content -like 'Error*' -or $content -like 'error*') { $content = 'content ' + $content }
+            $row.SiteInfo = $(if ($content) { '{0}, {1}' -f $deployments, $content } else { $deployments })
+        }
 
         $detail = @()
         $detail += $(if ($row.HasDefinition) { 'Definition: row in Apps.csv' }
@@ -570,6 +596,28 @@ function Add-AppFromSource {
 }
 
 <#
+    The read-only facts about a row, for the top of the per-application dialog:
+    what the list no longer shows as columns.
+#>
+function Get-InventoryRowInfo {
+    param([Parameter(Mandatory = $true)]$InventoryRow)
+
+    $info = [ordered]@{}
+    $info['Status']     = [string]$InventoryRow.Status
+    $info['Definition'] = $(if ($InventoryRow.HasDefinition) { 'row in Apps.csv' } else { 'none' })
+    $info['Package']    = $(if ($InventoryRow.HasPackage) { [string]$InventoryRow.PackageRoot } else { 'none' })
+    if ($InventoryRow.HasPackage) {
+        $info['PSADT'] = $(if ($InventoryRow.IsLegacy) { 'none - legacy folder' } else { 'generation ' + $InventoryRow.Toolkit })
+        $info['Files'] = '{0} file(s)' -f $InventoryRow.FilesCount
+        if ($InventoryRow.Modified) { $info['Modified'] = ([datetime]$InventoryRow.Modified).ToString('yyyy-MM-dd HH:mm') }
+    }
+    $site = [string]$InventoryRow.Site
+    if ($InventoryRow.SiteInfo -and $InventoryRow.SiteInfo -ne 'not read') { $site += ' - ' + $InventoryRow.SiteInfo }
+    $info['Site'] = $site
+    return $info
+}
+
+<#
     Edits the definition of a row. A package that exists is rebuilt from the
     edited row - metadata and commands, nothing else - so the row stays the
     source of truth. Name and Version are the key: editing them does not rename
@@ -581,9 +629,11 @@ function Edit-AppDefinition {
         $Config = (Get-ActiveConfig)
     )
 
+    $info = Get-InventoryRowInfo -InventoryRow $InventoryRow
+
     if ($InventoryRow.IsLegacy -and -not $InventoryRow.HasDefinition) {
-        $null = Show-MessageDialog -Caption 'Legacy folder' -Buttons 'OK' -Icon 'Information' -Text (
-            "{0}`n`nholds no PSADT script, so there is nothing the tool could read a definition from or write one into. Add the application afresh, or put a PSADT structure into the folder." -f $InventoryRow.PackageRoot)
+        $info['Note'] = 'No PSADT script inside, so there is nothing the tool could read a definition from or write one into. Add the application afresh, or put a PSADT structure into the folder.'
+        $null = Open-EditDialog -Info $info -ReadOnly -title ('View: ' + $InventoryRow.AppFullName) -PropertyOrder @()
         return $false
     }
 
@@ -597,7 +647,7 @@ function Edit-AppDefinition {
     foreach ($column in $script:AppListColumns) { $item[$column] = $app.$column }
 
     $script:EditDialogInstallerPath = $null
-    $answer = Open-EditDialog -item $item -title ('Edit: ' + $InventoryRow.AppFullName) -PropertyOrder $script:AppListColumns
+    $answer = Open-EditDialog -item $item -Info $info -title ('Edit: ' + $InventoryRow.AppFullName) -PropertyOrder $script:AppListColumns
     $answer = $answer | Where-Object { $_ -isnot [int] }
     if (-not $answer) { Write-Info 'Cancelled.'; return $false }
 
