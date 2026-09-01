@@ -286,6 +286,14 @@ function Sort-CatalogVersion {
 function Get-CatalogPackageVersion {
     param([Parameter(Mandatory = $true)][string]$PackageIdentifier)
 
+    # The index knows the versions and costs no request. A package it does not
+    # hold - brand new, or the index could not be fetched - is asked of GitHub.
+    try {
+        $indexed = @(Get-WingetIndexVersion -PackageIdentifier $PackageIdentifier)
+        if ($indexed.Count -gt 0) { return $indexed }
+    }
+    catch { Write-Warn ("winget index not available, asking GitHub: {0}" -f $_.Exception.Message) }
+
     $entries  = Get-CatalogDirectory -Path (Get-CatalogManifestPath -PackageIdentifier $PackageIdentifier)
     $versions = @($entries | Where-Object { $_.type -eq 'dir' } | Select-Object -ExpandProperty name)
 
@@ -657,7 +665,9 @@ function Get-CatalogList {
 }
 
 <#
-    Searches the manifest repository by walking its folders.
+    Searches for a package. With the official winget index (wingetindex.ps1)
+    that is a local query over ids, names, monikers and publishers. Without
+    it, the manifest repository is walked, and that has limits:
 
     Know what this can and cannot do. The repository is organised by
     **publisher**: `manifests/<first character of the identifier>/<Publisher>/<Package>`.
@@ -673,11 +683,21 @@ function Get-CatalogList {
 function Find-CatalogPackage {
     param(
         [Parameter(Mandatory = $true)][string]$Query,
-        [int]$MaxPublishers = 8
+        [int]$MaxPublishers = 8,
+        # Skip the index and walk GitHub - what the tool did before the index.
+        [switch]$NoIndex
     )
 
     $query = $Query.Trim()
     if ($query.Length -lt 2) { throw 'Please search for at least two characters.' }
+
+    # The official index first: by id, name, moniker and publisher, local and
+    # in a moment. The walk below stays as the fallback for a machine that
+    # cannot reach the CDN or has no winsqlite3.dll.
+    if (-not $NoIndex) {
+        try { return @(Search-WingetIndex -Query $query) }
+        catch { Write-Warn ("winget index not available, walking GitHub instead: {0}" -f $_.Exception.Message) }
+    }
 
     # A full package id needs no searching.
     if ($query -match '^[^\s]+\.[^\s]+$') {
