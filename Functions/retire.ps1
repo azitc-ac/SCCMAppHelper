@@ -1,4 +1,4 @@
-<#
+﻿<#
     SCCMAppHelper - retiring an application version
 
     Two levels, because "stop deploying this" and "delete this" are different
@@ -34,7 +34,7 @@
 function Get-CMApplicationInventory {
     param($Config = (Get-ActiveConfig))
 
-    $signature = [regex]::Escape((Get-ToolSignature))
+    $signature = Get-ToolSignaturePattern
 
     # The collections that belong to an application are the ones named after it,
     # not the ones it happens to be deployed to. Deriving them from deployments

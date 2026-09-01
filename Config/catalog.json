@@ -1,5 +1,5 @@
 {
-    "comment": "Front page for 'New from catalog'. packageId is the winget-pkgs identifier - the manifest path is derived from it (Publisher.Package -> manifests/<p>/Publisher/Package). Anything not listed here is reachable through the search box.",
+    "comment": "Front page of 'From winget'. packageId is the winget-pkgs identifier - the manifest path is derived from it (Publisher.Package -> manifests/<p>/Publisher/Package). Anything not listed here is reachable through the search box.",
     "packages": [
         { "name": "7-Zip",                     "packageId": "7zip.7zip" },
         { "name": "Notepad++",                 "packageId": "Notepad++.Notepad++" },

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     ConfigMgr script detection - file version based.
 
