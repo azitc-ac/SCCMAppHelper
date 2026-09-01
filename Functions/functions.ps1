@@ -600,6 +600,36 @@ function Get-OverlongContentPath {
     return @($found | Sort-Object Length -Descending)
 }
 
+<#
+    How long the content paths get once the site addresses them over UNC: the
+    longest of them, how many are past the limit, and the worst offender. One
+    walk over the metadata, so it is cheap enough to run for every package
+    the list shows - which is where a too long path should be seen, not at
+    the moment of publishing.
+#>
+function Measure-ContentPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContentPath,
+        [Parameter(Mandatory = $true)][string]$ContentUnc,
+        [int]$Limit = 259
+    )
+
+    $result = [pscustomobject]@{ Longest = 0; Overlong = 0; Worst = ''; Limit = $Limit }
+    if (-not (Test-Path -LiteralPath $ContentPath)) { return $result }
+
+    $prefix = $ContentUnc.TrimEnd('\')
+    $local  = $ContentPath.TrimEnd('\')
+    try {
+        foreach ($file in [System.IO.Directory]::EnumerateFiles($local, '*', [System.IO.SearchOption]::AllDirectories)) {
+            $length = $prefix.Length + ($file.Length - $local.Length)
+            if ($length -gt $result.Longest) { $result.Longest = $length; $result.Worst = $file.Substring($local.Length) }
+            if ($length -gt $Limit) { $result.Overlong++ }
+        }
+    }
+    catch { }
+    return $result
+}
+
 function Set-ADTLogPath {
     param(
         [Parameter(Mandatory = $true)][string]$ContentRoot,
@@ -1155,6 +1185,16 @@ function New-AppPackage {
     }
 
     if ($InstallerPath) { Copy-PackageInstaller -ContentRoot $contentPath -InstallerPath $InstallerPath -Config $Config }
+
+    # Measured here, with the installer in place, so a package that ConfigMgr
+    # would refuse is known before anyone tries to publish it.
+    $measure = Measure-ContentPath -ContentPath $contentPath -ContentUnc (ConvertTo-CMContentPath -Path $contentPath -Config $Config)
+    if ($measure.Overlong -gt 0) {
+        Write-Warn ("{0} file(s) are past the {1} character path limit once addressed over UNC - the longest is {2} characters: ...{3}" -f
+            $measure.Overlong, $measure.Limit, $measure.Longest, $measure.Worst.Substring([Math]::Max(0, $measure.Worst.Length - 80)))
+        Write-Warn ("Shorten the package by at least {0} characters - renaming the folder [{1}] is usually the shortest way - or ConfigMgr reports 'could not find file'." -f
+            ($measure.Longest - $measure.Limit), $appFullName)
+    }
 
     Write-Ok "Package ready: $packageRoot"
     return $packageRoot
