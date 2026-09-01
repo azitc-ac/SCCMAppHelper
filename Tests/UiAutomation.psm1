@@ -1,4 +1,4 @@
-<#
+﻿<#
     SCCMAppHelper - a small UI Automation driver for the WPF dialogs.
 
     Used by Test-Dialogs.ps1 to run the tool and operate it from a second

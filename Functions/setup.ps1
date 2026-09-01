@@ -1,4 +1,4 @@
-<#
+﻿<#
     SCCMAppHelper - discovery and first run setup
 
     Reads as much as possible from the ConfigMgr site itself instead of asking

@@ -1,9 +1,12 @@
-<#
+﻿<#
     SCCMAppHelper - core functions
     https://blog.zarenko.net
 
-    Workflow (mirrors IntuneWin32Helper):
-        Apps.csv  ->  PSADT package on the source share  ->  ConfigMgr application
+    Workflow:
+        definition (Apps.csv)  ->  package on the source share  ->  ConfigMgr application
+
+    The three are joined into one list by Get-AppInventory (inventory.ps1), and
+    every action is taken from a row of that list.
 
     All ConfigMgr work lives in Publish-CMApplication. A package carries nothing
     but its PSADT content - the detection script and the icon are rendered at
@@ -12,12 +15,13 @@
 #>
 
 if (-not $rootDir) { $rootDir = Split-Path -Parent $PSScriptRoot }
-if (-not $toolVersion) { $toolVersion = '1.0' }
+if (-not $toolVersion) { $toolVersion = '1.1' }
 
 . "$rootDir\Functions\ui.ps1"
 . "$rootDir\Functions\setup.ps1"
 . "$rootDir\Functions\catalog.ps1"
 . "$rootDir\Functions\retire.ps1"
+. "$rootDir\Functions\inventory.ps1"
 
 #region --------------------------------------------------------------- output
 
@@ -34,6 +38,14 @@ function Write-Fail { param([string]$Message) Write-Host "    $Message" -Foregro
     clause holds no script that could carry it.
 #>
 function Get-ToolSignature { return "SCCMAppHelper $toolVersion" }
+
+<#
+    The pattern that recognises the signature of any version of the tool. An
+    application published by 1.0 is still ours after the version moved on -
+    matching the exact signature would have reported every one of them as
+    foreign, and Publish would have warned about overwriting its own detection.
+#>
+function Get-ToolSignaturePattern { return 'SCCMAppHelper \d+(\.\d+)*' }
 
 #endregion
 
@@ -350,7 +362,7 @@ function Update-AppListSchema {
         $header = Get-Content -LiteralPath $CsvPath -TotalCount 1 -ErrorAction SilentlyContinue
     }
 
-    if (-not $header -or [string]::IsNullOrWhiteSpace(($header -replace '﻿', ''))) {
+    if (-not $header -or [string]::IsNullOrWhiteSpace(($header -replace [char]0xFEFF, ''))) {
         Write-Warn "App list is empty, writing the column header: $CsvPath"
         Set-Content -LiteralPath $CsvPath -Value ('"' + ($script:AppListColumns -join '";"') + '"') -Encoding UTF8
         return
@@ -940,6 +952,10 @@ function Resolve-AppLogo {
 function New-AppPackage {
     param(
         [Parameter(Mandatory = $true)]$App,
+        # The installer to put into Files\ - a download is moved, anything else
+        # is copied, and a file already there with the same name and size is
+        # left alone.
+        [string]$InstallerPath,
         $Config = (Get-ActiveConfig)
     )
 
@@ -1002,8 +1018,53 @@ function New-AppPackage {
         }
     }
 
+    if ($InstallerPath) { Copy-PackageInstaller -ContentRoot $contentPath -InstallerPath $InstallerPath -Config $Config }
+
     Write-Ok "Package ready: $packageRoot"
     return $packageRoot
+}
+
+<#
+    Puts the installer into Files\. A download from the staging folder _DL is
+    moved, so the share does not end up holding every installer twice; a file
+    from anywhere else - somebody's Downloads folder - is copied and stays where
+    it was. The staging folder is removed once it is empty.
+#>
+function Copy-PackageInstaller {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContentRoot,
+        [Parameter(Mandatory = $true)][string]$InstallerPath,
+        $Config = (Get-ActiveConfig)
+    )
+
+    if (-not (Test-Path -LiteralPath $InstallerPath)) { Write-Warn "Installer not found: $InstallerPath"; return }
+
+    $filesPath = Join-Path $ContentRoot 'Files'
+    if (-not (Test-Path -LiteralPath $filesPath)) { $null = New-Item -ItemType Directory -Path $filesPath -Force }
+
+    $source = Get-Item -LiteralPath $InstallerPath
+    $target = Join-Path $filesPath $source.Name
+
+    if ((Test-Path -LiteralPath $target) -and (Get-Item -LiteralPath $target).Length -eq $source.Length) {
+        Write-Info "Installer already in Files: $($source.Name)"
+        return
+    }
+
+    $staging = Join-Path (Get-PackageWorkRoot -Config $Config) '_DL'
+    $isStaged = $source.FullName.StartsWith($staging, [System.StringComparison]::OrdinalIgnoreCase)
+
+    if ($isStaged) {
+        Move-Item -LiteralPath $source.FullName -Destination $target -Force
+        Write-Ok "Installer moved into Files: $($source.Name)"
+        $stagingFolder = $source.DirectoryName
+        if ($stagingFolder -ne $staging -and -not @(Get-ChildItem -LiteralPath $stagingFolder -Force -ErrorAction SilentlyContinue).Count) {
+            Remove-Item -LiteralPath $stagingFolder -Force -ErrorAction SilentlyContinue
+        }
+    }
+    else {
+        Copy-Item -LiteralPath $source.FullName -Destination $target -Force
+        Write-Ok "Installer copied into Files: $($source.Name)"
+    }
 }
 
 <#
@@ -1584,68 +1645,6 @@ function Import-AppPackage {
     return $metadata
 }
 
-<#
-    Every folder below sourceRoot holding a PSADT script is a package - that is
-    the only condition. What ConfigMgr knows about it is asked at the site: an
-    application named "<Name> - <Version>" whose deployment type carries our
-    signature is maintained by this tool, one without it was created by hand or
-    by the older scripts and would have its detection overwritten on publish.
-#>
-function Get-AppPackage {
-    param(
-        $Config = (Get-ActiveConfig),
-        [switch]$NoSiteLookup
-    )
-
-    $workRoot = Get-PackageWorkRoot -Config $Config
-    $results  = @()
-
-    foreach ($dir in (Get-ChildItem -LiteralPath $workRoot -Directory -ErrorAction SilentlyContinue)) {
-        $contentPath = Get-PackageContentPath -PackageRoot $dir.FullName -Config $Config
-        $adtScript   = Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'
-        if (-not (Test-Path -LiteralPath $adtScript)) { continue }
-
-        $parsed = Split-AppFolderName -FolderName $dir.Name
-
-        $results += [pscustomobject]@{
-            AppName      = $parsed.Name
-            AppVersion   = $parsed.Version
-            Status       = 'Unknown'
-            LastModified = (Get-Item -LiteralPath $adtScript).LastWriteTime
-            PackageRoot  = $dir.FullName
-        }
-    }
-
-    if (-not $NoSiteLookup -and $results.Count -gt 0) {
-        $signature = [regex]::Escape((Get-ToolSignature))
-        $published = @{}
-
-        try {
-            Invoke-InCMSite -Config $Config -ScriptBlock {
-                foreach ($application in (Get-CMApplication)) {
-                    # The comment of the deployment type since native detection,
-                    # the header of the generated detection script before that.
-                    $xml = $application.SDMPackageXML
-                    $published[$application.LocalizedDisplayName] =
-                        ($xml -match $signature) -or ($xml -match 'Generated by SCCMAppHelper')
-                }
-            }
-
-            foreach ($package in $results) {
-                $fullName = Get-AppFullName -Name $package.AppName -Version $package.AppVersion
-                $package.Status =
-                    if     (-not $published.ContainsKey($fullName)) { 'Not published' }
-                    elseif ($published[$fullName])                  { 'Published (this tool)' }
-                    else                                            { 'Published (foreign)' }
-            }
-        }
-        catch {
-            Write-Warn ("Could not read the applications from the site - status stays unknown: {0}" -f $_.Exception.Message)
-        }
-    }
-
-    return ($results | Sort-Object AppName, AppVersion)
-}
 #endregion
 
 #region -------------------------------------------------- ConfigMgr publishing
@@ -2027,79 +2026,6 @@ function Add-CMApplicationSupersedenceForOlderVersions {
         catch {
             Write-Info ("Supersedence for [{0}] not set: {1}" -f $candidate.LocalizedDisplayName, $_.Exception.Message)
         }
-    }
-}
-
-#endregion
-
-#region ------------------------------------------------------------ workflows
-
-function createApps {
-    param(
-        [switch]$createAndPublish,
-        [string]$csvPath = (Join-Path $rootDir 'Apps.csv')
-    )
-
-    $config = Get-ActiveConfig
-    Update-AppListSchema -CsvPath $csvPath
-
-    while ($true) {
-        $title = if ($createAndPublish) { 'Select applications to create and publish' } else { 'Select applications to create' }
-        $apps = Open-SelectDialogWithEdit -CsvPath $csvPath -title $title -size large
-
-        # Known WPF quirk: the selection collection can also contain int values.
-        if ($null -ne $apps) { $apps = $apps | Where-Object { $_ -is [System.Management.Automation.PSCustomObject] } }
-        if ($null -eq $apps -or ($apps | Measure-Object).Count -eq 0) { break }
-
-        foreach ($app in $apps) {
-            try {
-                $packageRoot = New-AppPackage -App $app -Config $config
-
-                if ($config.openExplorerOnCreate -or $config.openEditorOnCreate) {
-                    $contentPath = Get-PackageContentPath -PackageRoot $packageRoot -Config $config
-
-                    if ($config.openExplorerOnCreate) {
-                        Write-Host 'ToDo: copy all setup files into .\Files, then press ENTER' -ForegroundColor Cyan
-                        explorer (Join-Path $contentPath 'Files')
-                        pause
-                    }
-                    if ($config.openEditorOnCreate) {
-                        Write-Host 'ToDo: fill the Install & Uninstall sections, then press ENTER' -ForegroundColor Cyan
-                        $editor = if ($config.editor) { $config.editor } else { 'notepad' }
-                        & $editor (Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1')
-                        pause
-                    }
-                }
-
-                if ($createAndPublish) {
-                    Publish-CMApplication -PackageRoot $packageRoot -Bulk:(($apps | Measure-Object).Count -gt 1) -Config $config
-                }
-            }
-            catch {
-                Write-Fail ("[{0} - {1}] {2}" -f $app.Name, $app.Version, $_.Exception.Message)
-                if (($apps | Measure-Object).Count -eq 1) { pause }
-            }
-        }
-    }
-}
-
-function deployApps {
-    $config = Get-ActiveConfig
-    $packages = Get-AppPackage -Config $config
-
-    if (($packages | Measure-Object).Count -eq 0) {
-        $null = Show-MessageDialog -Text "No packages found below`n`n$(Get-PackageWorkRoot -Config $config)`n`nExpected one folder per package, containing Invoke-AppDeployToolkit.ps1 either directly or in a Content subfolder." -Caption 'SCCMAppHelper' -Buttons 'OK' -Icon 'Information'
-        return
-    }
-
-    $selection = Open-SelectDialog -data ($packages | Select-Object AppName, AppVersion, Status, LastModified, PackageRoot) -title 'Select packages to publish to ConfigMgr' -large
-    if ($null -ne $selection) { $selection = $selection | Where-Object { $_ -isnot [int] } }
-    if ($null -eq $selection -or ($selection | Measure-Object).Count -eq 0) { return }
-
-    $bulk = (($selection | Measure-Object).Count -gt 1)
-    foreach ($package in $selection) {
-        try   { Publish-CMApplication -PackageRoot $package.PackageRoot -Bulk:$bulk -Config $config }
-        catch { Write-Fail ("[{0}] {1}" -f $package.AppName, $_.Exception.Message) }
     }
 }
 
