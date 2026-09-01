@@ -4,16 +4,16 @@
 
 .DESCRIPTION
     Starts the tool in a second process and operates it the way a person would:
-    presses the tiles, works through the dialogs behind them, and checks what
-    comes back.
+    checks the main window and its buttons, opens the record editor through
+    Add -> Blank record, and cancels back out.
 
-    The catalog leg really downloads an installer and really appends a row to
-    Apps.csv - that is what the feature does, and a test that stopped short of
-    it would not be testing much. Both are easy to undo: delete the row, delete
-    the folder under _DL.
+    The winget leg really downloads an installer, really writes a row into
+    Apps.csv and really builds a package on the share - that is what the feature
+    does, and a test that stopped short of it would not be testing much. All of
+    it is easy to undo: delete the row, delete the package folder.
 
-    Needs a reachable ConfigMgr site, because the package list asks the site for
-    its status column, and network access for the catalog leg.
+    Needs a reachable ConfigMgr site, because the main window asks the site for
+    its site column, and network access for the winget leg.
 
 .NOTES
     Windows PowerShell 5.1. The tool is started with -STA as WPF requires; this
@@ -31,8 +31,9 @@ param(
     [string]$ToolPath,
     [int]$TimeoutSeconds = 120,
 
-    # The catalog leg reaches out to GitHub, downloads an installer and writes a
-    # row. Leave it out to keep the run offline and read only.
+    # The winget leg reaches out to GitHub, downloads an installer, writes a
+    # row and builds a package. Leave it out to keep the run offline and read
+    # only.
     [switch]$SkipCatalog,
 
     # Small, an MSI, and not usually in Apps.csv - so the row it writes proves
@@ -63,15 +64,16 @@ function Test-That {
 }
 
 <#
-    The catalog as a prefill source: press "From catalog...", pick a package,
-    take the newest installer, confirm the download, and check that the record
-    comes back filled and reaches Apps.csv.
+    winget as a source: press "From winget..." in the record editor, pick a
+    package, take the newest installer, confirm the download, and check that the
+    record comes back filled, reaches Apps.csv and becomes a package on the
+    share with the installer in Files.
 #>
 function Test-CatalogPrefill {
-    param($Tool, $Editor, [string]$Package, [string]$AppListCsv)
+    param($Tool, $Editor, [string]$Package, [string]$AppListCsv, [string]$SourceRoot)
 
-    Write-Host "`nFrom catalog" -ForegroundColor Cyan
-    Invoke-UiaElement -Element (Find-UiaElement -Root $Editor -AutomationId 'FromCatalog')
+    Write-Host "`nFrom winget" -ForegroundColor Cyan
+    Invoke-UiaElement -Element (Find-UiaElement -Root $Editor -AutomationId 'FromWinget')
 
     $catalog = Wait-UiaWindow -ProcessId $Tool.Id -AutomationId 'CatalogDialog' -TimeoutSeconds 60
     Test-That 'the catalog dialog appears' ($null -ne $catalog)
@@ -112,6 +114,7 @@ function Test-CatalogPrefill {
     if ($report) {
         $text = Find-UiaElement -Root $report -AutomationId 'MessageText' -TimeoutSeconds 5
         Test-That 'the report names the download folder' ($text -and $text.Current.Name -match '_DL')
+        Test-That 'the report says the file goes into Files' ($text -and $text.Current.Name -match 'Files')
         Invoke-UiaElement -Element (Find-UiaElement -Root $report -AutomationId 'OK')
     }
 
@@ -127,119 +130,136 @@ function Test-CatalogPrefill {
     Invoke-UiaElement -Element (Find-UiaElement -Root $Editor -AutomationId 'OK')
 
     if ($recordName) {
-        Start-Sleep -Seconds 2
+        # OK writes the row and builds the package; PSADT's template takes a
+        # moment, so the main window is waited for rather than a fixed sleep.
+        $null = Wait-UiaWindow -ProcessId $Tool.Id -AutomationId 'MainDialog' -TimeoutSeconds 180
         $rows = @(Import-Csv -LiteralPath $AppListCsv -Delimiter ';' | Where-Object { $_.Name -eq $recordName })
         Test-That "Apps.csv holds a row for [$recordName]" ($rows.Count -gt 0)
         Test-That 'the row carries a detection method' (@($rows | Where-Object { $_.DetectionMethod }).Count -gt 0) `
             (($rows | ForEach-Object { "$($_.Version) / $($_.DetectionMethod)" }) -join ', ')
+
+        if ($SourceRoot -and $rows.Count -gt 0) {
+            $version = ($rows | Select-Object -Last 1).Version
+            $packageRoot = Join-Path $SourceRoot ('{0} - {1}' -f $recordName, $version)
+            Test-That "the package folder exists: $packageRoot" (Test-Path -LiteralPath $packageRoot)
+            $files = @()
+            foreach ($candidate in @((Join-Path $packageRoot 'Files'), (Join-Path $packageRoot 'Content\Files'))) {
+                if (Test-Path -LiteralPath $candidate) { $files = @(Get-ChildItem -LiteralPath $candidate -File) }
+            }
+            Test-That 'the installer is in Files' ($files.Count -gt 0) (($files | ForEach-Object { $_.Name }) -join ', ')
+        }
     }
 }
 
 if (-not (Test-Path -LiteralPath $ToolPath)) { throw "Tool not found: $ToolPath" }
-$appListCsv = Join-Path (Split-Path -Parent $ToolPath) 'Apps.csv'
+$toolRoot   = Split-Path -Parent $ToolPath
+$appListCsv = Join-Path $toolRoot 'Apps.csv'
+
+# Where the packages land, for the winget leg - read the way the tool reads it.
+$sourceRoot = ''
+try {
+    $config = Get-Content -Raw -LiteralPath (Join-Path $toolRoot 'Config\config.json') -Encoding UTF8 | ConvertFrom-Json
+    $site = $null
+    if ($config.sites) {
+        $site = @($config.sites | Where-Object { $_.name -eq $config.activeSite -or $_.siteCode -eq $config.activeSite })[0]
+        if (-not $site) { $site = @($config.sites)[0] }
+    }
+    else { $site = $config }
+    foreach ($candidate in @($site.sourceRootLocal, $site.sourceRoot)) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { $sourceRoot = $candidate; break }
+    }
+}
+catch { }
 
 Write-Host "Starting $ToolPath" -ForegroundColor Cyan
-$tool = Start-Process powershell.exe -PassThru -WorkingDirectory (Split-Path -Parent $ToolPath) -ArgumentList @(
+$tool = Start-Process powershell.exe -PassThru -WorkingDirectory $toolRoot -ArgumentList @(
     '-STA', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ToolPath)
 
 try {
-    # ------------------------------------------------------------ start dialog
-    Write-Host "`nStart dialog" -ForegroundColor Cyan
-    $start = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'StartDialog' -TimeoutSeconds $TimeoutSeconds
-    Test-That 'the start dialog appears' ($null -ne $start)
-    if (-not $start) { return }
+    # ------------------------------------------------------------- main window
+    Write-Host "`nMain window" -ForegroundColor Cyan
+    $main = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'MainDialog' -TimeoutSeconds $TimeoutSeconds
+    Test-That 'the main window appears' ($null -ne $main)
+    if (-not $main) { return }
 
-    foreach ($id in 'CreateNew', 'CreateNewAndPublish', 'PublishExisting', 'Tools') {
-        $tile = Find-UiaElement -Root $start -AutomationId $id -TimeoutSeconds 5
-        Test-That "tile [$id] is present" ($null -ne $tile)
-        if ($tile) {
-            $invokable = @($tile.GetSupportedPatterns() | Where-Object { $_.ProgrammaticName -like 'Invoke*' }).Count -gt 0
-            Test-That "tile [$id] can be invoked"       $invokable
-            Test-That "tile [$id] takes keyboard focus" $tile.Current.IsKeyboardFocusable
+    foreach ($id in 'Add', 'NewVersion', 'Edit', 'Delete', 'Build', 'Publish', 'Retire', 'OpenFolder', 'Tools', 'Refresh', 'Settings', 'Cancel') {
+        $button = Find-UiaElement -Root $main -AutomationId $id -TimeoutSeconds 5
+        Test-That "button [$id] is present" ($null -ne $button)
+        if ($button -and $id -in 'Add', 'Retire', 'Tools', 'Refresh', 'Cancel') {
+            $invokable = @($button.GetSupportedPatterns() | Where-Object { $_.ProgrammaticName -like 'Invoke*' }).Count -gt 0
+            Test-That "button [$id] can be invoked" $invokable
         }
     }
 
-    # -------------------------------------------------------- publish packages
-    Write-Host "`nPublish packages" -ForegroundColor Cyan
-    Invoke-UiaElement -Element (Find-UiaElement -Root $start -AutomationId 'PublishExisting')
+    $rows = Get-UiaElement -Root $main -ControlType DataItem
+    Write-Host ("        the list holds {0} row(s)" -f $rows.Count) -ForegroundColor DarkGray
+    Test-That 'the rows carry the package state' (@($rows | Where-Object { $_.Current.Name -match 'Package=' }).Count -gt 0)
+    Test-That 'the rows carry the site state'    (@($rows | Where-Object { $_.Current.Name -match 'Site=' }).Count -gt 0)
 
-    $select = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'SelectDialog' -TimeoutSeconds $TimeoutSeconds
-    Test-That 'the package selection dialog appears' ($null -ne $select)
-    if ($select) {
-        $rows = Get-UiaElement -Root $select -ControlType DataItem
-        Test-That 'the package list is not empty' ($rows.Count -gt 0) "rows: $($rows.Count)"
-        Test-That 'the rows carry a status' (@($rows | Where-Object { $_.Current.Name -match 'Status=' }).Count -gt 0)
-        Invoke-UiaElement -Element (Find-UiaElement -Root $select -AutomationId 'Cancel')
+    $status = Find-UiaElement -Root $main -AutomationId 'Status' -TimeoutSeconds 5
+    Test-That 'the status line is present' ($null -ne $status) $(if ($status) { $status.Current.Name })
+    Test-That 'the site was read' ($status -and $status.Current.Name -notmatch 'not read')
+
+    # With nothing selected, the row actions are greyed out and Add is not.
+    Test-That 'Edit is disabled without a selection' (-not (Find-UiaElement -Root $main -AutomationId 'Edit' -TimeoutSeconds 3).Current.IsEnabled)
+    Test-That 'Add is enabled without a selection'   ((Find-UiaElement -Root $main -AutomationId 'Add' -TimeoutSeconds 3).Current.IsEnabled)
+
+    # ------------------------------------------------------------- Add -> Blank
+    Write-Host "`nAdd -> Blank record" -ForegroundColor Cyan
+    Invoke-UiaElement -Element (Find-UiaElement -Root $main -AutomationId 'Add')
+    $blank = Find-UiaElement -Root ([Windows.Automation.AutomationElement]::RootElement) -AutomationId 'AddBlank' -TimeoutSeconds 10
+    Test-That 'the Add menu offers a blank record' ($null -ne $blank)
+    foreach ($id in 'AddWinget', 'AddFile') {
+        Test-That "the Add menu offers [$id]" ($null -ne (Find-UiaElement -Root ([Windows.Automation.AutomationElement]::RootElement) -AutomationId $id -TimeoutSeconds 3))
+    }
+    if ($blank) { Invoke-UiaElement -Element $blank }
+
+    $editor = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'EditDialog' -TimeoutSeconds 30
+    Test-That 'the record editor appears' ($null -ne $editor)
+
+    if ($editor) {
+        # By id rather than by control type: DetectionMethod is a combo box,
+        # not a text box, and an editable combo box brings its own inner edit
+        # control along, so counting types is not a stable check.
+        $missing = @()
+        foreach ($field in 'Publisher', 'Name', 'Version', 'DetectionMethod', 'DetectionPattern',
+                           'ProductCode', 'InstallCmd', 'UninstallCmd', 'Notes') {
+            if (-not (Find-UiaElement -Root $editor -AutomationId $field -TimeoutSeconds 3)) { $missing += $field }
+        }
+        Test-That 'the editor shows all nine columns' ($missing.Count -eq 0) "missing: $($missing -join ', ')"
+        Test-That 'DetectionMethod is a list' ((Find-UiaElement -Root $editor -AutomationId 'DetectionMethod' -TimeoutSeconds 3).Current.ControlType.ProgrammaticName -match 'ComboBox')
+        Test-That 'DetectionPattern has a hint' ($null -ne (Find-UiaElement -Root $editor -AutomationId 'DetectionPatternHint' -TimeoutSeconds 3))
+        foreach ($id in 'FromMsi', 'FromExe', 'FromWinget') {
+            Test-That "prefill button [$id] is present" ($null -ne (Find-UiaElement -Root $editor -AutomationId $id -TimeoutSeconds 3))
+        }
+
+        if ($SkipCatalog) { Invoke-UiaElement -Element (Find-UiaElement -Root $editor -AutomationId 'Cancel') }
+        else { Test-CatalogPrefill -Tool $tool -Editor $editor -Package $CatalogPackage -AppListCsv $appListCsv -SourceRoot $sourceRoot }
     }
 
-    $start = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'StartDialog' -TimeoutSeconds 60
-    Test-That 'cancelling returns to the start dialog' ($null -ne $start)
-    if (-not $start) { return }
+    $main = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'MainDialog' -TimeoutSeconds 180
+    Test-That 'the main window is back' ($null -ne $main)
+    if (-not $main) { return }
 
-    # --------------------------------------------------------- create packages
-    Write-Host "`nCreate packages" -ForegroundColor Cyan
-    Invoke-UiaElement -Element (Find-UiaElement -Root $start -AutomationId 'CreateNew')
+    # ---------------------------------------------------------- Delete complains
+    # Delete with nothing selected is disabled; Retire with nothing selected
+    # opens the retire dialog against the site, which is cancelled again. That
+    # exercises a second window and the way back.
+    Write-Host "`nRetire" -ForegroundColor Cyan
+    Invoke-UiaElement -Element (Find-UiaElement -Root $main -AutomationId 'Retire')
+    $retire = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'RetireDialog' -TimeoutSeconds 120
+    Test-That 'the retire dialog appears' ($null -ne $retire)
+    if ($retire) { Invoke-UiaElement -Element (Find-UiaElement -Root $retire -AutomationId 'Cancel') }
 
-    $appList = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'AppListDialog' -TimeoutSeconds $TimeoutSeconds
-    Test-That 'the app list dialog appears' ($null -ne $appList)
-    if ($appList) {
-        $rows = Get-UiaElement -Root $appList -ControlType DataItem
-        Write-Host ("        the app list holds {0} row(s)" -f $rows.Count) -ForegroundColor DarkGray
-        foreach ($id in 'New', 'Edit', 'Duplicate', 'Delete', 'OK', 'Cancel') {
-            Test-That "app list button [$id] is present" ($null -ne (Find-UiaElement -Root $appList -AutomationId $id -TimeoutSeconds 3))
-        }
-
-        # Delete with nothing selected only complains, and that complaint is the
-        # tool's own message dialog - a Win32 one could not be driven at all.
-        Invoke-UiaElement -Element (Find-UiaElement -Root $appList -AutomationId 'Delete')
-        $message = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'MessageDialog' -TimeoutSeconds 20
-        Test-That 'the message dialog appears' ($null -ne $message)
-        if ($message) {
-            $text = Find-UiaElement -Root $message -AutomationId 'MessageText' -TimeoutSeconds 5
-            Test-That 'the message dialog carries its text' ($null -ne $text) $(if ($text) { $text.Current.Name })
-            Test-That 'the message dialog has an OK button' ($null -ne (Find-UiaElement -Root $message -AutomationId 'OK' -TimeoutSeconds 5))
-            Invoke-UiaElement -Element (Find-UiaElement -Root $message -AutomationId 'OK')
-        }
-
-        # -------------------------------------------------------- record editor
-        Invoke-UiaElement -Element (Find-UiaElement -Root $appList -AutomationId 'New')
-        $editor = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'EditDialog' -TimeoutSeconds 30
-        Test-That 'the record editor appears' ($null -ne $editor)
-
-        if ($editor) {
-            # By id rather than by control type: DetectionMethod is a combo box,
-            # not a text box, and an editable combo box brings its own inner edit
-            # control along, so counting types is not a stable check.
-            $missing = @()
-            foreach ($field in 'Publisher', 'Name', 'Version', 'DetectionMethod', 'DetectionPattern',
-                               'ProductCode', 'InstallCmd', 'UninstallCmd', 'Notes') {
-                if (-not (Find-UiaElement -Root $editor -AutomationId $field -TimeoutSeconds 3)) { $missing += $field }
-            }
-            Test-That 'the editor shows all nine columns' ($missing.Count -eq 0) "missing: $($missing -join ', ')"
-            Test-That 'DetectionMethod is a list' ((Find-UiaElement -Root $editor -AutomationId 'DetectionMethod' -TimeoutSeconds 3).Current.ControlType.ProgrammaticName -match 'ComboBox')
-            Test-That 'DetectionPattern has a hint' ($null -ne (Find-UiaElement -Root $editor -AutomationId 'DetectionPatternHint' -TimeoutSeconds 3))
-            foreach ($id in 'FromMsi', 'FromExe', 'FromCatalog') {
-                Test-That "prefill button [$id] is present" ($null -ne (Find-UiaElement -Root $editor -AutomationId $id -TimeoutSeconds 3))
-            }
-
-            if ($SkipCatalog) { Invoke-UiaElement -Element (Find-UiaElement -Root $editor -AutomationId 'Cancel') }
-            else { Test-CatalogPrefill -Tool $tool -Editor $editor -Package $CatalogPackage -AppListCsv $appListCsv }
-        }
-
-        $appList = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'AppListDialog' -TimeoutSeconds 60
-        Test-That 'the app list is back' ($null -ne $appList)
-        if ($appList) { Invoke-UiaElement -Element (Find-UiaElement -Root $appList -AutomationId 'Cancel') }
-    }
-
-    $start = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'StartDialog' -TimeoutSeconds 60
-    Test-That 'cancelling returns to the start dialog again' ($null -ne $start)
+    $main = Wait-UiaWindow -ProcessId $tool.Id -AutomationId 'MainDialog' -TimeoutSeconds 120
+    Test-That 'cancelling returns to the main window' ($null -ne $main)
 
     # ------------------------------------------------------------------- close
     Write-Host "`nClosing" -ForegroundColor Cyan
-    if ($start) { Invoke-UiaElement -Element (Find-UiaElement -Root $start -AutomationId 'Cancel') }
+    if ($main) { Invoke-UiaElement -Element (Find-UiaElement -Root $main -AutomationId 'Cancel') }
 
     for ($i = 0; $i -lt 60 -and -not $tool.HasExited; $i++) { Start-Sleep -Milliseconds 500 }
-    Test-That 'the tool exits on Cancel' $tool.HasExited
+    Test-That 'the tool exits on Close' $tool.HasExited
 }
 finally {
     if (-not $tool.HasExited) {

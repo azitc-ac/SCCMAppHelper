@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-08-31 (a detection evaluated on a real client)
+Last updated: 2026-09-01 (the main window replaces the start menu)
 
 ## Where it stands
 
@@ -20,6 +20,39 @@ The tool was written from scratch on 2026-08-27/28 as the ConfigMgr counterpart 
 `IntuneWin32Helper`, replacing the older scripts under `Powershell\SCCM`
 (`create-AppsInCM.ps1`, `add-NewMSIToAppsCSV.ps1`, `create-CollForOutdatedApps.ps1`,
 `add-ServerRoleToAppCollections.ps1`, `update-ins.req.dev.cols.ps1`).
+
+## The main window (2026-09-01, not yet run against a site)
+
+The start menu with its four verbs is gone. The tool opens on one list, `Get-AppInventory` in
+`Functions\inventory.ps1`, which joins the three things that exist per application:
+
+    definition (Apps.csv)  ->  package on the share  ->  application in the site
+
+One row per `<Name> - <Version>`, with a Definition, a Package and a Site column, plus
+content distribution and the deployment count. `Published, source changed` comes from the
+content fingerprint the deployment type already carried. Every action is a button of that
+window and works on the selected rows: Add, New version, Edit, Delete definition, Build
+package, Publish, Retire, Open folder, Tools.
+
+Adding is one step now: winget download or a picked file, the record editor, and the package
+is built with the installer moved into `Files\` (`Copy-PackageInstaller`). The download stays
+in `_DL` only until the record is confirmed. `createApps`, `deployApps`,
+`Open-SelectDialogWithEdit` and `Show-StartDialog` are gone; `Publish-CMApplication`,
+`New-AppPackage`, `Import-AppPackage`, the tools and the retire dialog are unchanged and are
+called from the new window.
+
+What was checked: every script parses, and the data layer - inventory join, `Set-`/
+`Remove-AppListRow`, `ConvertTo-AppRecord`, the staged move of an installer - was run against
+a fake share. **Not yet checked**, because it needs Windows and a site:
+
+* the WPF main window itself (`Show-InventoryDialog`) - the coloured state cells use a
+  `DataTrigger` style and the row tooltip a `Setter` with a binding, both wrapped in
+  `try/catch` so a refusal costs the colour, not the window
+* `Get-CMApplicationState` - one `Get-CMApplication`, one `Get-CMApplicationDeployment`
+  without a filter, one `Get-CMDistributionStatus`; the last two are in `try/catch` and
+  degrade to an empty count and an empty content column
+* `Tests\Test-Dialogs.ps1`, rewritten for the new window
+* the winget leg end to end through **Add... -> From winget**
 
 ## Test status
 
