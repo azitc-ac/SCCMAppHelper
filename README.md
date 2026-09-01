@@ -196,19 +196,31 @@ user MSIX and is missing on Windows Server 2022.
 
 ### Finding a package
 
-The repository is keyed by **publisher** - `manifests/<letter>/<Publisher>/<Package>` - so it
-cannot be searched by product name. KeePass sits under `DominikReichl`, Visual Studio Code
-under `Microsoft`. Building an index of it does not work either: GitHub answers the tree API
-intermittently and returns incomplete trees without setting its own `truncated` flag.
+The search does what the winget client does: it does not ask GitHub. The client downloads a
+prebuilt index from Microsoft's CDN - `source.msix`, holding an SQLite database with every
+package id, name, moniker, version and publisher of the repository - and searches that. So
+does the tool: the first search fetches it into `Config\winget-index\index.db` (a few dozen
+MB), it is refreshed once a day or on **Update index**, and from then on a search is a local
+query that answers in a moment, by id, name, moniker and publisher. Resolving the newest
+version of a package costs no request either. Only the manifests and the installer are still
+fetched, from `raw.githubusercontent.com` and the vendor, neither of which counts against the
+GitHub API limit.
 
-So there are three ways in, in the order the dialog tries them:
+The database is read through `winsqlite3.dll`, which every Windows since 10 / Server 2016
+ships in `System32` - nothing to install, no binary in the repository.
 
-1. The **curated list** in `Config\catalog.json` - searched by product name, no request needed.
-2. The **full package id** - anything containing a dot is resolved directly.
-3. The **repository search**, which matches publishers.
+The dialog tries, in order:
 
-Whatever is found the hard way can be kept: **Remember** writes it into `catalog.json`, so it
-is found by name next time. The list is meant to grow.
+1. The **curated list** in `Config\catalog.json` - your own front page, matched first.
+2. The **index**, as above.
+3. The **repository walk** over the GitHub contents API, only when the index cannot be
+   fetched or read. That is the old way and has its limits: the repository is keyed by
+   **publisher** - `manifests/<letter>/<Publisher>/<Package>` - so it cannot be searched by
+   product name, and unauthenticated GitHub allows 60 requests an hour, of which one search
+   spends up to fifteen. A full package id (anything containing a dot) is resolved directly.
+
+Whatever is found can be kept: **Remember** writes it into `catalog.json`, so it
+is found first next time. The list is meant to hold what you actually deploy.
 
 ### What the dialog then does
 
@@ -236,9 +248,8 @@ name. The name, the publisher and a detection that was worked out by hand stay; 
 ProductCode and the commands follow the new installer. Publishing then wires the supersedence
 to the older versions as usual.
 
-Nothing that is downloaded is ever executed. GitHub allows 60 unauthenticated API requests an
-hour, which is why the curated list stores the package id - resolving a version from it costs
-a single request.
+Nothing that is downloaded is ever executed - the index is data, and so is the installer until
+the client runs it.
 
 ## Package layout
 

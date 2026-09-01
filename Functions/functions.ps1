@@ -19,6 +19,7 @@ if (-not $toolVersion) { $toolVersion = '1.1' }
 
 . "$rootDir\Functions\ui.ps1"
 . "$rootDir\Functions\setup.ps1"
+. "$rootDir\Functions\wingetindex.ps1"
 . "$rootDir\Functions\catalog.ps1"
 . "$rootDir\Functions\retire.ps1"
 . "$rootDir\Functions\inventory.ps1"

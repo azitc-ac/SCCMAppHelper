@@ -1266,7 +1266,7 @@ function Show-CatalogDialog {
 
     $grid = New-Object Windows.Controls.Grid
     $grid.Margin = '12'
-    foreach ($height in 'Auto', '*', 'Auto') {
+    foreach ($height in 'Auto', '*', 'Auto', 'Auto') {
         $row = New-Object Windows.Controls.RowDefinition
         $row.Height = $(if ($height -eq '*') { New-Object Windows.GridLength -ArgumentList 1, ([Windows.GridUnitType]::Star) } else { [Windows.GridLength]::Auto })
         $null = $grid.RowDefinitions.Add($row)
@@ -1280,7 +1280,7 @@ function Show-CatalogDialog {
     $searchBox.VerticalContentAlignment = 'Center'
     $searchBox.Text = $Query
     $searchButton = New-Object Windows.Controls.Button
-    $searchButton.Content = 'Search winget-pkgs'
+    $searchButton.Content = 'Search'
     $searchButton.Padding = '12,4'
     $searchButton.Margin = '8,0,0,0'
     [Windows.Controls.DockPanel]::SetDock($searchButton, 'Right')
@@ -1295,14 +1295,53 @@ function Show-CatalogDialog {
     $dataGrid.IsReadOnly = $true
     $dataGrid.SelectionMode = 'Single'
     $dataGrid.SelectionUnit = 'FullRow'
-    foreach ($column in 'Name', 'PackageId') {
+    foreach ($column in 'Name', 'PackageId', 'Version') {
         $col = New-Object Windows.Controls.DataGridTextColumn
         $col.Header = $column
         $col.Binding = New-Object Windows.Data.Binding($column)
-        $col.Width = $(if ($column -eq 'Name') { 260 } else { 420 })
+        $col.Width = $(switch ($column) { 'Name' { 240 } 'PackageId' { 330 } default { 110 } })
         $null = $dataGrid.Columns.Add($col)
     }
     $dataGrid.ItemsSource = @($Packages)
+
+    # --- index line: where the search looks, and how old that is ---
+    $indexLine = New-Object Windows.Controls.DockPanel
+    $indexLine.Margin = '0,8,0,0'
+    $indexText = New-Object Windows.Controls.TextBlock
+    $indexText.Foreground = [System.Windows.Media.Brushes]::DimGray
+    $indexText.VerticalAlignment = 'Center'
+    $indexText.TextWrapping = 'Wrap'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($indexText, 'IndexStatus')
+    $updateIndexButton = New-Object Windows.Controls.Button
+    $updateIndexButton.Content = 'Update index'
+    $updateIndexButton.Padding = '12,4'
+    $updateIndexButton.Margin = '8,0,0,0'
+    $updateIndexButton.ToolTip = 'Fetch the winget index from cdn.winget.microsoft.com again - it is refreshed once a day by itself'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($updateIndexButton, 'UpdateIndex')
+    [Windows.Controls.DockPanel]::SetDock($updateIndexButton, 'Right')
+    $null = $indexLine.Children.Add($updateIndexButton)
+    $null = $indexLine.Children.Add($indexText)
+    [Windows.Controls.Grid]::SetRow($indexLine, 2)
+    $null = $grid.Children.Add($indexLine)
+
+    $describeIndex = {
+        $info = Get-WingetIndexInfo
+        $indexText.Text = $(if ($info) {
+            'winget index: {0} packages, fetched {1:yyyy-MM-dd HH:mm}. The search looks up id, name, moniker and publisher locally; the curated list is matched first.' -f $info.Packages, $info.Downloaded
+        } else {
+            'No winget index yet - the first search fetches it from cdn.winget.microsoft.com (a few dozen MB, once a day). Without it the search walks GitHub, which is slow and limited.'
+        })
+    }
+    & $describeIndex
+    $updateIndexButton.Add_Click({
+        $window.Cursor = 'Wait'
+        try {
+            $null = Get-WingetIndex -Force
+            & $describeIndex
+        }
+        catch { $null = Show-MessageDialog -Text $_.Exception.Message -Caption 'winget index' -Buttons 'OK' -Icon 'Warning' -Owner $window }
+        finally { $window.Cursor = 'Arrow' }
+    })
     [Windows.Automation.AutomationProperties]::SetAutomationId($window, 'CatalogDialog')
     [Windows.Automation.AutomationProperties]::SetAutomationId($dataGrid, 'CatalogGrid')
     [Windows.Automation.AutomationProperties]::SetAutomationId($searchBox, 'SearchQuery')
@@ -1348,7 +1387,7 @@ function Show-CatalogDialog {
     $null = $buttons.Children.Add($rememberButton)
     $null = $buttons.Children.Add($okButton)
     $null = $buttons.Children.Add($cancelButton)
-    [Windows.Controls.Grid]::SetRow($buttons, 2)
+    [Windows.Controls.Grid]::SetRow($buttons, 3)
     $null = $grid.Children.Add($buttons)
 
     $okButton.Add_Click({ if ($dataGrid.SelectedItem) { $window.DialogResult = $true } })
@@ -1358,26 +1397,26 @@ function Show-CatalogDialog {
         $query = $searchBox.Text
         if ([string]::IsNullOrWhiteSpace($query)) { $dataGrid.ItemsSource = @($Packages); return }
 
-        # The curated list first: it is already here, it matches on the product
-        # name, and it covers the everyday case. Only what it does not know is
-        # worth a request.
+        # The curated list first: it is already here and it is what you deploy.
+        # Then the index, which is local too; the two are shown together, the
+        # curated hits on top.
         $local = @($Packages | Where-Object { $_.name -like "*$query*" -or $_.packageId -like "*$query*" } |
-                        ForEach-Object { [pscustomobject]@{ Name = $_.name; PackageId = $_.packageId } })
-        if ($local.Count -gt 0) { $dataGrid.ItemsSource = $local; return }
+                        ForEach-Object { [pscustomobject]@{ Name = $_.name; PackageId = $_.packageId; Version = '' } })
 
         $window.Cursor = 'Wait'
         try {
             $found = @(Find-CatalogPackage -Query $query)
-            if ($found.Count -eq 0) {
+            & $describeIndex
+            $known = @($local | ForEach-Object { $_.PackageId })
+            $merged = @($local) + @($found | Where-Object { $_.PackageId -notin $known } |
+                                        ForEach-Object { [pscustomobject]@{ Name = $_.Name; PackageId = $_.PackageId; Version = [string]$_.Version } })
+            if ($merged.Count -eq 0) {
                 $null = Show-MessageDialog -Owner $window -Caption 'From winget-pkgs' -Buttons 'OK' -Icon 'Information' -Text (
                     "Nothing found for [$query].`n`n" +
-                    "The repository is organised by publisher, not by product: a package lives under " +
-                    "manifests\<letter>\<Publisher>\<Package>, and the letter is the publisher's. " +
-                    "Searching for a product whose vendor is named differently cannot work - KeePass sits " +
-                    "under DominikReichl, Visual Studio Code under Microsoft.`n`n" +
-                    "Try the vendor name, or paste the full package id (it contains a dot) and it is taken as it is.")
+                    "The index is searched by package id, name, moniker and publisher. " +
+                    "Try another spelling, the vendor name, or paste the full package id (it contains a dot) and it is taken as it is.")
             }
-            $dataGrid.ItemsSource = $found
+            $dataGrid.ItemsSource = $merged
         }
         catch {
             $null = Show-MessageDialog -Text $_.Exception.Message -Caption 'From winget-pkgs' -Buttons 'OK' -Icon 'Warning' -Owner $window
