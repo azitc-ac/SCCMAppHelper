@@ -8,7 +8,8 @@ Last updated: 2026-09-01 (the main window replaces the start menu)
 
 ## Where it stands
 
-Version 1.0, feature complete for the intended workflow: master list -> PSADT package ->
+Version 1.1 - the main window - on top of 1.0, which is tagged `v1.0` as the last state with
+the start menu. 1.0 was feature complete for the intended workflow: master list -> PSADT package ->
 ConfigMgr application including collections, deployments, content distribution and
 supersedence, plus a setup assistant and the collection maintenance tools.
 
@@ -32,7 +33,13 @@ One row per `<Name> - <Version>`, with a Definition, a Package and a Site column
 content distribution and the deployment count. `Published, source changed` comes from the
 content fingerprint the deployment type already carried. Every action is a button of that
 window and works on the selected rows: Add, New version, Edit, Delete definition, Build
-package, Publish, Retire, Open folder, Tools.
+package, Publish, Retire, Open folder, Tools. A **Show** box narrows the list to what is on
+the share, in the site, both, or neither.
+
+The tool version is 1.1 now. The deployment type comment still carries the exact version,
+but recognising our own applications matches `SCCMAppHelper <any version>`
+(`Get-ToolSignaturePattern`) - otherwise everything 1.0 published would have turned
+`Foreign` the moment the version moved.
 
 Adding is one step now: winget download or a picked file, the record editor, and the package
 is built with the installer moved into `Files\` (`Copy-PackageInstaller`). The download stays

@@ -66,6 +66,11 @@ applications, one for the deployments, one for the distribution status. On a lar
 takes a few seconds; if the site cannot be reached the list still shows, with the site column
 at `Unknown`. **Refresh** reads both again.
 
+**Show** narrows the list to one of the three places: on the share, in the site, both, on
+the share but not in the site (what is waiting to be published), in the site but not on the
+share, changed since publishing, definition only, or without a definition. The text filter
+next to it matches name, version, publisher and the state columns on top of that.
+
 The buttons follow the state of the selected rows:
 
 | Button | What it does |
