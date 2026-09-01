@@ -8,8 +8,8 @@ Last updated: 2026-09-01 (the main window replaces the start menu)
 
 ## Where it stands
 
-Version 1.1 - the main window - on top of 1.0, which is tagged `v1.0` as the last state with
-the start menu. 1.0 was feature complete for the intended workflow: master list -> PSADT package ->
+Version 1.1 - the main window - on top of 1.0, which is tagged `1.0` (GitHub release 1.0) as
+the last state with the start menu. 1.0 was feature complete for the intended workflow: master list -> PSADT package ->
 ConfigMgr application including collections, deployments, content distribution and
 supersedence, plus a setup assistant and the collection maintenance tools.
 
@@ -60,6 +60,28 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
   degrade to an empty count and an empty content column
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
+
+## Foreign packages, PSADT 3, legacy folders, collection folders (2026-09-01, not yet run against a site)
+
+* `start-SCCMAppHelper.cmd` starts the tool with `-STA -ExecutionPolicy Bypass` and keeps
+  the window open on an error.
+* `Get-ADTScript` recognises PSADT 4 (`Invoke-AppDeployToolkit.ps1`) and PSADT 3
+  (`Deploy-Application.ps1`); metadata reading and writing, the log path
+  (`config.psd1` / `AppDeployToolkitConfig.xml`) and the deployment type command line
+  (`Deploy-Application.exe`) follow the generation. A folder with neither is `Legacy`:
+  listed, coloured red, and Edit / Build / Publish stay disabled for it.
+* Importing reads the install and uninstall sections out of the script
+  (`Read-PackageCommand`) into the row, and `Set-PackageCommand -TakeOver` wraps the same
+  lines into the tool's block - only when they are identical to the row, otherwise the
+  difference is reported. From then on the row is editable like any other.
+* Each entry of `collections` may carry a `folderPath`; the settings dialog has a
+  **Collections** tab with one line per entry. Publish resolves it like
+  `collectionFolderPath` and falls back to that.
+
+Checked: every script parses; the data layer against a fake share with a PSADT 4 package,
+a PSADT 3 package and a legacy folder - inventory, command read-out, take-over into the
+block, metadata written for both generations. **Not checked**: the Collections tab and the
+main window on Windows, a real PSADT 3 package from the older scripts, publishing one.
 
 ## Test status
 

@@ -18,11 +18,14 @@ package changed since it was published. Every action is taken from that list.
 
 ## Start
 
+Double-click `start-SCCMAppHelper.cmd`, or from a prompt:
+
 ```powershell
 .\start-SCCMAppHelper.ps1
 ```
 
-Windows PowerShell 5.1 with the ConfigMgr console installed.
+Windows PowerShell 5.1 with the ConfigMgr console installed. The batch file starts it with
+`-STA` and `-ExecutionPolicy Bypass` and keeps the window open if the tool ends with an error.
 
 ### First run on a new server
 
@@ -51,7 +54,8 @@ One row per application, joined from three places:
 | Column | Where it comes from | Values |
 | --- | --- | --- |
 | **Definition** | a row in `Apps.csv` | `Yes`, or `-` for a package folder the list does not know |
-| **Package** | the folder `<Name> - <Version>` on the source share | `-` none, `No files` (nothing in `Files\`), `Ready` |
+| **Package** | the folder `<Name> - <Version>` on the source share | `-` none, `No files` (nothing in `Files\`), `Ready`, `Legacy` (no PSADT script inside) |
+| **PSADT** | the toolkit generation of the package | `4` (`Invoke-AppDeployToolkit.ps1`) or `3` (`Deploy-Application.ps1`) |
 | **Site** | the application in ConfigMgr | `Not published`, `Published`, `Published, source changed`, `Foreign` |
 | **Content** | distribution status of its content | `On 1 DP`, `In progress`, `Error`, `Not distributed` |
 | **Deployments** | number of deployments of the application | |
@@ -285,15 +289,28 @@ Packages built before this, or by hand, keep whatever their own config says.
 
 ### Importing existing packages
 
-Every folder below `sourceRoot` that contains an `Invoke-AppDeployToolkit.ps1` counts as a
-package - that is the only condition. A folder the master list does not know shows up with
-`Definition = -`; **Build package** or **Publish** takes it over first:
+Every folder below `sourceRoot` named `<Name> - <Version>` with a PSADT structure inside
+counts as a package - whatever built it, and whichever toolkit generation: PSADT 4
+(`Invoke-AppDeployToolkit.ps1`, `$adtSession`, `Config\config.psd1`) and PSADT 3
+(`Deploy-Application.ps1`, `$appVendor` and friends, `AppDeployToolkitConfig.xml`) are both
+read and written, and a PSADT 3 package is published with `Deploy-Application.exe` in the
+command line. A folder with neither script is listed as `Legacy`: it is there, and the tool
+does not touch it - nothing can be read from it and nothing written into it, so it cannot be
+edited, built or published. Add the application afresh, or put a PSADT structure into the
+folder.
+
+A package the master list does not know shows up with `Definition = -`; **Build package** or
+**Publish** takes it over first:
 
 * name and version come from the folder name (`<Name> - <Version>`, split at the last
   separator)
 * publisher and detection settings come from `Apps.csv` if a row with that name and version
   exists, otherwise from `AppVendor` in the PSADT script - only if both are missing does the
   tool ask
+* the install and uninstall commands are read out of the script as they stand and put into
+  the row, and the script's sections are wrapped into the tool's marked block - same lines,
+  only marked - so the row is the source of truth from then on and **Edit** works on it like
+  on any other
 * an existing `SupportFiles\logo.png` is reused as the application icon
 * apps that were not in `Apps.csv` are appended to it, so the master list stays complete
 
@@ -410,7 +427,7 @@ site.
 | Key | Meaning |
 | --- | --- |
 | `installCommand`, `uninstallCommand` | Deployment type command lines |
-| `collections` | Collections created per application. Each entry has a `namePattern` where `{App}` becomes `Name - Version`, a `deployPurpose` (`Required` or `Available`) and a `userNotification` |
+| `collections` | Collections created per application. Each entry has a `namePattern` where `{App}` becomes `Name - Version`, a `deployPurpose` (`Required` or `Available`), a `userNotification` and an optional `folderPath` - the console folder below `DeviceCollection` for that collection, so required and available collections can live apart. Empty falls back to `collectionFolderPath` of the site. The settings dialog edits these on their own **Collections** tab |
 | `globalDeployments` | Deployments to existing collections, e.g. an "all apps" catalog collection. Each entry names its `collectionName` and its `deployPurpose` |
 | `supersedeOlderVersions` | Wire the new application as superseding older versions of the same product |
 | `supersedenceUninstall` | Uninstall the old version when superseding |
