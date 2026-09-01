@@ -61,6 +61,16 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
 
+## Five columns (2026-09-01)
+
+The list is down to Application, Version, Publisher, Status and Site. Status is one value
+per row, derived in `Get-AppInventory` in the order Legacy, Foreign, Published no package,
+Published changed, Published, No installer, Ready to publish, Definition only - the first
+thing that needs doing is what is shown, and the colour hangs on it. Site holds deployments
+and content in one cell. Definition, PSADT generation, path, files and modified moved into
+the row tooltip and into an info block on top of the record editor (`Open-EditDialog -Info`),
+which also serves read-only for legacy folders (`-ReadOnly`). The Show views are unchanged.
+
 ## Foreign packages, PSADT 3, legacy folders, collection folders (2026-09-01, not yet run against a site)
 
 * `start-SCCMAppHelper.cmd` starts the tool with `-STA -ExecutionPolicy Bypass` and keeps

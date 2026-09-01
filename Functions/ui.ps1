@@ -99,7 +99,7 @@ function Show-InventoryDialog {
     $filterBox = New-Object Windows.Controls.TextBox
     $filterBox.Padding = '4'
     $filterBox.VerticalContentAlignment = 'Center'
-    $filterBox.ToolTip = 'Filter - matches name, version, publisher and the state columns'
+    $filterBox.ToolTip = 'Filter - matches name, version, publisher, status and site'
     [Windows.Automation.AutomationProperties]::SetAutomationId($filterBox, 'Filter')
     $null = $top.Children.Add($filterBox)
     [Windows.Controls.Grid]::SetRow($top, 0)
@@ -117,37 +117,34 @@ function Show-InventoryDialog {
     [Windows.Automation.AutomationProperties]::SetAutomationId($dataGrid, 'InventoryGrid')
 
     foreach ($column in @(
-            @{ Header = 'Application'; Binding = 'Name';        Width = 260 },
-            @{ Header = 'Version';     Binding = 'Version';     Width = 110 },
-            @{ Header = 'Publisher';   Binding = 'Publisher';   Width = 170 },
-            @{ Header = 'Definition';  Binding = 'Definition';  Width = 80  },
-            @{ Header = 'Package';     Binding = 'Package';     Width = 90  },
-            @{ Header = 'PSADT';       Binding = 'Toolkit';     Width = 55  },
-            @{ Header = 'Site';        Binding = 'Site';        Width = 200 },
-            @{ Header = 'Content';     Binding = 'Content';     Width = 150 },
-            @{ Header = 'Deployments'; Binding = 'Deployments'; Width = 95  },
-            @{ Header = 'Modified';    Binding = 'Modified';    Width = 130; Format = 'yyyy-MM-dd HH:mm' })) {
+            @{ Header = 'Application'; Binding = 'Name';      Width = 300 },
+            @{ Header = 'Version';     Binding = 'Version';   Width = 120 },
+            @{ Header = 'Publisher';   Binding = 'Publisher'; Width = 200 },
+            @{ Header = 'Status';      Binding = 'Status';    Width = 190 },
+            @{ Header = 'Site';        Binding = 'SiteInfo';  Width = 280 })) {
         $col = New-Object Windows.Controls.DataGridTextColumn
         $col.Header = $column.Header
-        $binding = New-Object Windows.Data.Binding($column.Binding)
-        if ($column.Format) { $binding.StringFormat = $column.Format }
-        $col.Binding = $binding
+        $col.Binding = New-Object Windows.Data.Binding($column.Binding)
         $col.Width = $column.Width
         $col.CanUserSort = $true
 
-        # The two state columns are what the list is for, so they are coloured:
-        # green is done, orange wants attention, red is not ours, grey is absent.
-        if ($column.Binding -in 'Package', 'Site') {
+        # The status is what the list is for, so it is coloured: green is done,
+        # blue is the next step, orange wants attention, red is not ours, grey
+        # is not there yet.
+        if ($column.Binding -eq 'Status') {
             try {
                 $style = New-Object Windows.Style -ArgumentList ([Windows.Controls.DataGridCell])
-                $colours = $(if ($column.Binding -eq 'Site') {
-                    @(@('Published', 'DarkGreen'), @('Published, source changed', 'DarkOrange'), @('Foreign', 'Firebrick'), @('Not published', 'Gray'), @('Unknown', 'Gray'))
-                } else {
-                    @(@('Ready', 'DarkGreen'), @('No files', 'DarkOrange'), @('Legacy', 'Firebrick'), @('-', 'Gray'))
-                })
-                foreach ($pair in $colours) {
+                foreach ($pair in @(
+                        @('Published', 'DarkGreen'),
+                        @('Ready to publish', 'DodgerBlue'),
+                        @('Published, changed', 'DarkOrange'),
+                        @('Published, no package', 'DarkOrange'),
+                        @('No installer', 'DarkOrange'),
+                        @('Definition only', 'Gray'),
+                        @('Foreign', 'Firebrick'),
+                        @('Legacy', 'Firebrick'))) {
                     $trigger = New-Object Windows.DataTrigger
-                    $trigger.Binding = New-Object Windows.Data.Binding($column.Binding)
+                    $trigger.Binding = New-Object Windows.Data.Binding('Status')
                     $trigger.Value = $pair[0]
                     $brush = [System.Windows.Media.Brushes]::($pair[1])
                     $null = $trigger.Setters.Add((New-Object Windows.Setter -ArgumentList ([Windows.Controls.DataGridCell]::ForegroundProperty), $brush))
@@ -160,7 +157,8 @@ function Show-InventoryDialog {
         $null = $dataGrid.Columns.Add($col)
     }
 
-    # The row tooltip spells the three states out.
+    # The row tooltip spells the three states out; the dialog behind a double
+    # click shows everything.
     try {
         $rowStyle = New-Object Windows.Style -ArgumentList ([Windows.Controls.DataGridRow])
         $null = $rowStyle.Setters.Add((New-Object Windows.Setter -ArgumentList ([Windows.Controls.DataGridRow]::ToolTipProperty), (New-Object Windows.Data.Binding('Detail'))))
@@ -181,7 +179,7 @@ function Show-InventoryDialog {
         if (-not [string]::IsNullOrWhiteSpace($needle)) {
             $items = @($items | Where-Object {
                 $row = $_
-                @(@('Name', 'Version', 'Publisher', 'Package', 'Site', 'Content') | Where-Object { [string]$row.$_ -like "*$needle*" }).Count -gt 0
+                @(@('Name', 'Version', 'Publisher', 'Status', 'SiteInfo') | Where-Object { [string]$row.$_ -like "*$needle*" }).Count -gt 0
             })
         }
         $dataGrid.ItemsSource = $null
@@ -454,7 +452,12 @@ function Open-EditDialog {
         [string]$title,
         [string[]]$PropertyOrder,
         # Setup dialogs are not about a setup file - hides "From MSI/EXE".
-        [switch]$NoFilePrefill
+        [switch]$NoFilePrefill,
+        # Read-only facts shown above the fields: status, package, site - what
+        # the main list keeps out of its columns.
+        [System.Collections.IDictionary]$Info,
+        # Only the facts, no fields: a legacy folder has nothing to edit.
+        [switch]$ReadOnly
     )
 
     $window = New-Object Windows.Window
@@ -485,8 +488,58 @@ function Open-EditDialog {
     $null = $fieldGrid.ColumnDefinitions.Add($labelColumn)
     $null = $fieldGrid.ColumnDefinitions.Add($valueColumn)
 
+    if ($Info -and $Info.Count -gt 0) {
+        $infoBorder = New-Object Windows.Controls.Border
+        $infoBorder.Background = [System.Windows.Media.Brushes]::WhiteSmoke
+        $infoBorder.BorderBrush = [System.Windows.Media.Brushes]::LightGray
+        $infoBorder.BorderThickness = '1'
+        $infoBorder.CornerRadius = '4'
+        $infoBorder.Padding = '10,8'
+        $infoBorder.Margin = '0,0,0,12'
+        [Windows.Automation.AutomationProperties]::SetAutomationId($infoBorder, 'Info')
+
+        $infoGrid = New-Object Windows.Controls.Grid
+        $infoLabelColumn = New-Object Windows.Controls.ColumnDefinition
+        $infoLabelColumn.Width = New-Object Windows.GridLength -ArgumentList 100
+        $infoValueColumn = New-Object Windows.Controls.ColumnDefinition
+        $infoValueColumn.Width = New-Object Windows.GridLength -ArgumentList 1, ([Windows.GridUnitType]::Star)
+        $null = $infoGrid.ColumnDefinitions.Add($infoLabelColumn)
+        $null = $infoGrid.ColumnDefinitions.Add($infoValueColumn)
+
+        $infoRow = 0
+        foreach ($infoKey in $Info.Keys) {
+            $rowDefinition = New-Object Windows.Controls.RowDefinition
+            $rowDefinition.Height = [Windows.GridLength]::Auto
+            $null = $infoGrid.RowDefinitions.Add($rowDefinition)
+
+            $infoLabel = New-Object Windows.Controls.TextBlock
+            $infoLabel.Text = $infoKey
+            $infoLabel.Foreground = [System.Windows.Media.Brushes]::DimGray
+            $infoLabel.Margin = '0,1,8,1'
+            [Windows.Controls.Grid]::SetRow($infoLabel, $infoRow)
+            [Windows.Controls.Grid]::SetColumn($infoLabel, 0)
+            $null = $infoGrid.Children.Add($infoLabel)
+
+            $infoValue = New-Object Windows.Controls.TextBox
+            $infoValue.Text = [string]$Info[$infoKey]
+            $infoValue.IsReadOnly = $true
+            $infoValue.BorderThickness = '0'
+            $infoValue.Background = [System.Windows.Media.Brushes]::Transparent
+            $infoValue.TextWrapping = 'Wrap'
+            $infoValue.Margin = '0,1,0,1'
+            [Windows.Automation.AutomationProperties]::SetAutomationId($infoValue, 'Info' + $infoKey)
+            [Windows.Controls.Grid]::SetRow($infoValue, $infoRow)
+            [Windows.Controls.Grid]::SetColumn($infoValue, 1)
+            $null = $infoGrid.Children.Add($infoValue)
+            $infoRow++
+        }
+        $infoBorder.Child = $infoGrid
+        $null = $stackPanel.Children.Add($infoBorder)
+    }
+
     $textBoxes = @{}
-    $keys = if ($PropertyOrder) { $PropertyOrder } else { $item.Keys }
+    $keys = if ($PropertyOrder) { $PropertyOrder } elseif ($item) { $item.Keys } else { @() }
+    if ($ReadOnly) { $keys = @() }
     $rowIndex = 0
 
     foreach ($key in $keys) {
@@ -737,12 +790,12 @@ function Open-EditDialog {
     $buttonPanel = New-Object Windows.Controls.StackPanel
     $buttonPanel.Orientation = 'Horizontal'
     $buttonPanel.HorizontalAlignment = 'Right'
-    if (-not $NoFilePrefill) {
+    if (-not $NoFilePrefill -and -not $ReadOnly) {
         $null = $buttonPanel.Children.Add($msiButton)
         $null = $buttonPanel.Children.Add($exeButton)
         $null = $buttonPanel.Children.Add($catalogButton)
     }
-    $null = $buttonPanel.Children.Add($okButton)
+    if ($ReadOnly) { $cancelButton.Content = 'Close' } else { $null = $buttonPanel.Children.Add($okButton) }
     $null = $buttonPanel.Children.Add($cancelButton)
 
     $null = $stackPanel.Children.Add($buttonPanel)
