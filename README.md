@@ -4,12 +4,17 @@ Quickly create and publish Configuration Manager applications using PSADT - the 
 counterpart to [IntuneWin32Helper](../IntuneWin32Helper).
 
 ```
-Apps.csv  ->  PSADT package on the source share  ->  ConfigMgr application
-                                                     + collections
-                                                     + deployments
-                                                     + content distribution
-                                                     + supersedence
+definition (Apps.csv)  ->  package on the source share  ->  ConfigMgr application
+                           PSADT + installer in Files\      + deployment type and detection
+                                                            + content distribution
+                                                            + collections and deployments
+                                                            + supersedence
 ```
+
+Three things exist per application, and the main window shows all three in one row: whether
+there is a **definition**, whether there is a **package** on the share and what is in it,
+and what the **site** has - published or not, by this tool or by hand, and whether the
+package changed since it was published. Every action is taken from that list.
 
 ## Start
 
@@ -39,16 +44,63 @@ a different environment - the setup assistant starts and reads the site itself:
 The assistant is also available later under **Tools -> Add ConfigMgr site**, and
 **Tools -> Check site configuration** re-runs the test at any time.
 
-The start dialog offers:
+### The main window
 
-| Tile | What it does |
+One row per application, joined from three places:
+
+| Column | Where it comes from | Values |
+| --- | --- | --- |
+| **Definition** | a row in `Apps.csv` | `Yes`, or `-` for a package folder the list does not know |
+| **Package** | the folder `<Name> - <Version>` on the source share | `-` none, `No files` (nothing in `Files\`), `Ready` |
+| **Site** | the application in ConfigMgr | `Not published`, `Published`, `Published, source changed`, `Foreign` |
+| **Content** | distribution status of its content | `On 1 DP`, `In progress`, `Error`, `Not distributed` |
+| **Deployments** | number of deployments of the application | |
+
+`Published, source changed` means the package folder differs from what the site last received -
+the deployment type remembers a fingerprint of the content, and the folder is compared against
+it. `Foreign` is an application of the same name that this tool did not create; publishing
+overwrites its detection. The row tooltip spells the three states out.
+
+The share is read every time the window opens, and so is the site: three calls, one for the
+applications, one for the deployments, one for the distribution status. On a large site that
+takes a few seconds; if the site cannot be reached the list still shows, with the site column
+at `Unknown`. **Refresh** reads both again.
+
+The buttons follow the state of the selected rows:
+
+| Button | What it does |
 | --- | --- |
-| **Create packages** | Creates PSADT packages for the selected rows of `Apps.csv` |
-| **Create and publish** | Same, and publishes each package as a ConfigMgr application |
-| **Publish packages** | Publishes existing packages (again) |
-| **Tools** | Collection maintenance helpers |
+| **Add...** | A new application, from **winget**, from an **installer file**, or as a **blank record** - see below |
+| **New version...** | The selected application in a newer version: resolved from winget again, or from a file, with the detection somebody already worked out carried over |
+| **Edit** | Edits the definition; a package that exists is rebuilt from it, so the row stays the source of truth |
+| **Delete definition** | Removes the row from `Apps.csv` - the package folder and the application stay |
+| **Build package** | Creates the package on the share from the definition, or takes over a package folder the list does not know |
+| **Publish** | Creates or updates the ConfigMgr application: deployment type, detection, content, collections, deployments, supersedence. A row without a package is built first |
+| **Retire...** | Stops deploying a version, or deletes it and everything that belongs to it |
+| **Open folder** | The package folder of the selected row, or the share |
+| **Tools...** | Collection maintenance and site setup |
 
 The gear icon opens the settings editor for `Config\config.json`.
+
+### Adding an application
+
+Adding is one step: the installer is fetched, the record is confirmed, the package is built
+with the installer already in `Files\`. The row then shows up as `Ready` / `Not published`,
+and publishing is a second, deliberate click.
+
+* **From winget...** picks a package from the manifests of winget-pkgs, resolves the newest
+  version, downloads and verifies the installer - see *winget as a source* below. The record
+  comes out filled: publisher, name, version, detection and the silent install command.
+* **From file...** takes an EXE or MSI that was downloaded separately and reads it: an MSI
+  gives name, version, publisher and ProductCode and switches the detection to `MSI`; an EXE
+  gives its version resource and an install command with `/S`, which is a guess and is
+  marked as one.
+* **Blank record** opens an empty editor. The package is built without an installer, and the
+  folder and the script are opened for filling in by hand - that is what
+  `openExplorerOnCreate` and `openEditorOnCreate` are for now.
+
+A download waits in `<sourceRoot>\_DL\<Name> - <Version>\` until the record is confirmed,
+and is moved into `Files\` when the package is built. Cancelling the editor leaves it there.
 
 ## The master list: Apps.csv
 
@@ -71,15 +123,16 @@ deployment type name and the base for every collection name.
 Only `Publisher`, `Name` and `Version` are required - an older three column `apps.csv` is
 upgraded automatically on first use.
 
-In the app list dialog, **New** / **Duplicate** / **Edit** open an editor with two prefill
+The record editor - behind **Add...**, **New version...** and **Edit** - has three prefill
 buttons:
 
 * **From MSI...** reads ProductName, ProductVersion, Manufacturer and ProductCode from an
   MSI and switches the detection to `MSI`.
 * **From EXE...** reads the version resource of a setup EXE.
-* **From catalog...** picks the file first - see below - and then reads it the same way.
+* **From winget...** picks the file first - see below - and then reads it the same way.
 
-That replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
+A file picked through any of the three goes into `Files\` when the record is saved. That
+replaces `add-NewMSIToAppsCSV.ps1` and keeps the naming unambiguous.
 
 `InstallCmd` and `UninstallCmd` are written into the PSADT script inside a marked block:
 
@@ -114,11 +167,11 @@ disabled where nothing belongs in it:
 | `File` | the full path of the installed file | yours |
 | `Script` | nothing - `Content\SupportFiles\detection.ps1` | yours |
 
-## From catalog
+## winget as a source
 
-The third prefill source in the record editor, next to **From MSI...** and **From EXE...**:
-where those read a file you picked, this one finds the file first. Fetches the usual suspects
-without hunting for a download link. The source is the manifest
+Behind **Add... -> From winget**, **New version...** and the **From winget...** button of the
+record editor: where **From MSI...** and **From EXE...** read a file you picked, this one finds
+the file first. Fetches the usual suspects without hunting for a download link. The source is the manifest
 repository behind winget, [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs),
 read directly over HTTPS - the `winget` client itself is **not** used, because it is a per
 user MSIX and is missing on Windows Server 2022.
@@ -149,8 +202,9 @@ is found by name next time. The list is meant to grow.
    manifest. A file that does not match is deleted.
 5. **Read** the file the same way the **From MSI...** button does, and report its Authenticode
    signer.
-6. **Fill in** the record you already have open - publisher, name, version, detection method
-   and ProductCode - and leave the rest to `OK`.
+6. **Fill in** the record - publisher, name, version, detection method, ProductCode and the
+   install command - and leave the rest to `OK`. On OK the package is built with the
+   installer in `Files\`.
 
 Where a manifest offers several installers, an MSI wins over an EXE: it carries a ProductCode,
 which means native detection and PSADT's zero-config MSI deployment, so nothing has to be
@@ -158,11 +212,11 @@ maintained by hand. For an EXE the uninstall key comes from `AppsAndFeaturesEntr
 manifest - for 7-Zip that is literally `7-Zip`, which is exactly what `DetectionPattern`
 wants.
 
-It is a record source, not a workflow of its own - which is why it sits in the editor rather
-on the start menu. That also means it can lift an **existing** row onto a newer version, not
-just create one. The download waits in `_DL` under the same `<Name> - <Version>` name the
-package folder will have; packaging and publishing stay with **Create packages** and
-**Publish packages**.
+**New version...** on an existing row resolves the same package again without asking: the
+`Notes` column remembers the package id, and failing that the curated list is matched by
+name. The name, the publisher and a detection that was worked out by hand stay; version,
+ProductCode and the commands follow the new installer. Publishing then wires the supersedence
+to the older versions as usual.
 
 Nothing that is downloaded is ever executed. GitHub allows 60 unauthenticated API requests an
 hour, which is why the curated list stores the package id - resolving a version from it costs
@@ -227,15 +281,8 @@ Packages built before this, or by hand, keep whatever their own config says.
 ### Importing existing packages
 
 Every folder below `sourceRoot` that contains an `Invoke-AppDeployToolkit.ps1` counts as a
-package - that is the only condition. The status column asks ConfigMgr rather than the share:
-
-| Status | Meaning |
-| --- | --- |
-| `Not published` | no application `<Name> - <Version>` in the site |
-| `Published (this tool)` | its deployment type carries the tool signature |
-| `Published (foreign)` | it exists but was created by hand or by the older scripts - publishing overwrites its detection |
-
-Publishing a package the master list does not know yet takes it over first:
+package - that is the only condition. A folder the master list does not know shows up with
+`Definition = -`; **Build package** or **Publish** takes it over first:
 
 * name and version come from the folder name (`<Name> - <Version>`, split at the last
   separator)
@@ -348,7 +395,7 @@ ConfigMgr environments, all remaining keys are shared across sites.
 With a single site nothing is asked. With several sites the tool asks once per session and
 remembers the choice; **Tools -> Switch ConfigMgr site** changes it, and `activeSite`
 (name or site code) pins a default so the question never appears. The active site is shown
-in the title bar of the start dialog.
+in the title bar of the main window.
 
 A config without a `sites` array still works - its top level keys are then treated as one
 site.
@@ -420,10 +467,11 @@ Only spaces and underscores count as a boundary, so `PDF` never picks up
 powershell.exe -ExecutionPolicy Bypass -File .\Tests\Test-Dialogs.ps1
 ```
 
-Starts the tool and operates it from a second process through UI Automation:
-presses the tiles, checks the dialog behind each one, and cancels back out. Nothing is
-created, published or downloaded - every path ends on Cancel. It does need a reachable site,
-because the package list asks ConfigMgr for its status column.
+Starts the tool and operates it from a second process through UI Automation: checks the
+main window and its buttons, opens the record editor through **Add... -> Blank record**, and
+cancels back out. With the winget leg it really downloads an installer, confirms the record
+and builds the package - that is what the feature does, and both are easy to undo. It does
+need a reachable site, because the main window asks ConfigMgr for the site column.
 
 Two constraints shaped the dialogs and are worth keeping in mind when adding one:
 

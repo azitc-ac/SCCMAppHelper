@@ -1,5 +1,5 @@
 ﻿<#
-    SCCMAppHelper - application catalog
+    SCCMAppHelper - winget as an installer source
 
     Reads the manifests of https://github.com/microsoft/winget-pkgs directly
     over HTTPS. The winget client is deliberately not used: it is a per user
@@ -722,15 +722,39 @@ function Find-CatalogPackage {
     newest version, confirm, download, check the hash against the manifest and
     read what the installer says about itself.
 
-    Nothing is written here. The record is handed back and the record editor
-    fills its fields with it, exactly as "From MSI..." and "From EXE..." do -
-    the catalog is a third source for the same record, not a workflow of its
-    own. Returns $null when the user backs out at any point.
+    Nothing is written here. The record and the downloaded file are handed
+    back; Add-AppFromSource confirms the record in the editor and builds the
+    package with the file in Files - and the "From winget..." button of the
+    editor fills its fields with it, exactly as "From MSI..." and "From EXE..."
+    do. Returns $null when the user backs out at any point.
 #>
 function Read-CatalogPackage {
-    param($Config = (Get-ActiveConfig))
+    param(
+        $Config = (Get-ActiveConfig),
+        # An existing row: the package it came from is resolved again without
+        # asking, which is what "New version" needs. The Notes column remembers
+        # the package id; failing that, the curated list is matched by name.
+        $Template
+    )
 
-    $selection = Show-CatalogDialog -Packages (Get-CatalogList)
+    $selection = $null
+    if ($Template) {
+        $packageId = ''
+        if ([string]$Template.Notes -match '^(?<id>\S+\.\S+)\s+\S+\s+from winget-pkgs') { $packageId = $Matches['id'] }
+        if (-not $packageId) {
+            $match = @(Get-CatalogList | Where-Object { $_.name -eq [string]$Template.Name }) | Select-Object -First 1
+            if ($match) { $packageId = $match.packageId }
+        }
+        if ($packageId) {
+            $selection = [pscustomobject]@{ Name = [string]$Template.Name; PackageId = $packageId }
+            Write-Info "Package id from the existing row: $packageId"
+        }
+    }
+
+    if (-not $selection) {
+        $query = $(if ($Template) { [string]$Template.Name } else { '' })
+        $selection = Show-CatalogDialog -Packages (Get-CatalogList) -Query $query
+    }
     if (-not $selection) { Write-Info 'Cancelled.'; return $null }
 
     Write-Step "Catalog: $($selection.PackageId)"
@@ -765,7 +789,7 @@ function Read-CatalogPackage {
                     $manifest.PackageName, $manifest.PackageVersion,
                     $installer.Architecture, $installer.InstallerType,
                     $installer.InstallerUrl, $installer.Sha256, $downloadRoot) `
-                -Caption 'From catalog' -Buttons 'YesNo' -Icon 'Question'
+                -Caption 'From winget' -Buttons 'YesNo' -Icon 'Question'
     if ($answer -ne 'Yes') { Write-Info 'Cancelled - nothing was downloaded.'; return $null }
 
     $file     = Save-CatalogInstaller -Url $installer.InstallerUrl -Destination $downloadRoot -Sha256 $installer.Sha256
