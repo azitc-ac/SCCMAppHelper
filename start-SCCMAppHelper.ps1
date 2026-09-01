@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     SCCMAppHelper - create PSADT packages and publish them as ConfigMgr applications.
 

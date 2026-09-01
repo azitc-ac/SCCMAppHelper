@@ -1,4 +1,4 @@
-<#
+﻿<#
     SCCMAppHelper - retiring an application version
 
     Two levels, because "stop deploying this" and "delete this" are different
