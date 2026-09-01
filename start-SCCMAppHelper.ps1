@@ -6,8 +6,13 @@
     Companion tool to IntuneWin32Helper (https://blog.zarenko.net) for
     Microsoft Configuration Manager.
 
-        Apps.csv  ->  PSADT package on the source share  ->  ConfigMgr application
-                      (collections, deployments, content distribution, supersedence)
+        definition (Apps.csv)  ->  package on the source share  ->  ConfigMgr application
+                                   (PSADT + installer in Files)     (deployment type, content,
+                                                                    collections, deployments,
+                                                                    supersedence)
+
+    The main window lists every application with the state of all three, and
+    every action is taken from a row of that list.
 
 .NOTES
     Run in Windows PowerShell 5.1 with the ConfigMgr console installed.
@@ -45,20 +50,23 @@ if (-not (Test-DnsName -Name $config.siteServer)) {
 
 check-prereqs -Config $config
 
+# --- the main loop ---------------------------------------------------------
+# The list is read afresh every round, so what an action changed - a package
+# built, an application published, a site switched in the tools menu - shows
+# up as soon as the window is back.
 $continue = $true
 while ($continue) {
-    # Re-read every round so a site switch in the tools menu takes effect.
     $config = Get-ActiveConfig
-    $choice = Show-StartDialog -Title ("SCCMAppHelper - {0} [{1}] - https://blog.zarenko.net/" -f $config.siteName, $config.siteCode)
-    switch ($choice) {
-        'CreateNew'           { Write-Step 'Packaging assistant';               createApps }
-        'CreateNewAndPublish' { Write-Step 'Packaging + ConfigMgr publishing';  createApps -createAndPublish }
-        'PublishExisting'     { Write-Step 'Publishing existing packages';      deployApps }
-        'Tools'               { Write-Step 'Tools';                             Show-ToolsMenu }
-        'Cancel'              { Write-Info 'Cancelled';        $continue = $false }
-        'Closed'              { Write-Info 'Closed with [X]';  $continue = $false }
-        default               { Write-Info "Unexpected: $choice"; $continue = $false }
-    }
+
+    Write-Step ("Reading the share and the site [{0}]" -f $config.siteCode)
+    $inventory = Get-AppInventory -Config $config
+    Write-Info ("{0} application(s)" -f @($inventory.Rows).Count)
+
+    $choice = Show-InventoryDialog -Inventory $inventory.Rows `
+        -Title ("SCCMAppHelper - {0} [{1}] - https://blog.zarenko.net/" -f $config.siteName, $config.siteCode) `
+        -SourceRoot $inventory.WorkRoot -SiteRead $inventory.SiteRead
+
+    $continue = Invoke-InventoryAction -Choice $choice -Config $config
 }
 
 Stop-Transcript | Out-Null
