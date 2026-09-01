@@ -18,7 +18,7 @@
     Run in Windows PowerShell 5.1 with the ConfigMgr console installed.
 #>
 
-$toolVersion = '1.0'
+$toolVersion = '1.1'
 
 $rootDir = $PSScriptRoot
 if (-not $rootDir) { $rootDir = (Get-Location).Path }
