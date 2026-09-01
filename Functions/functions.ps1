@@ -15,7 +15,7 @@
 #>
 
 if (-not $rootDir) { $rootDir = Split-Path -Parent $PSScriptRoot }
-if (-not $toolVersion) { $toolVersion = '1.0' }
+if (-not $toolVersion) { $toolVersion = '1.1' }
 
 . "$rootDir\Functions\ui.ps1"
 . "$rootDir\Functions\setup.ps1"
@@ -38,6 +38,14 @@ function Write-Fail { param([string]$Message) Write-Host "    $Message" -Foregro
     clause holds no script that could carry it.
 #>
 function Get-ToolSignature { return "SCCMAppHelper $toolVersion" }
+
+<#
+    The pattern that recognises the signature of any version of the tool. An
+    application published by 1.0 is still ours after the version moved on -
+    matching the exact signature would have reported every one of them as
+    foreign, and Publish would have warned about overwriting its own detection.
+#>
+function Get-ToolSignaturePattern { return 'SCCMAppHelper \d+(\.\d+)*' }
 
 #endregion
 

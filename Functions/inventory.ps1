@@ -78,7 +78,7 @@ function Get-AppPackage {
 function Get-CMApplicationState {
     param($Config = (Get-ActiveConfig))
 
-    $signature = [regex]::Escape((Get-ToolSignature))
+    $signature = Get-ToolSignaturePattern
 
     $state = Invoke-InCMSite -Config $Config -ScriptBlock {
         $result = @{}

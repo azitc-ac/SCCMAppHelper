@@ -63,6 +63,38 @@ function Show-InventoryDialog {
     [Windows.Controls.DockPanel]::SetDock($refreshButton, 'Right')
     $null = $top.Children.Add($refreshButton)
 
+    # The view: which of the three places a row has to be in. "In the site" is
+    # what is deployed, "On the share" what could be, and the two combined are
+    # the everyday questions this list exists to answer.
+    $views = @(
+        [pscustomobject]@{ Name = 'All';                                Test = { $true } },
+        [pscustomobject]@{ Name = 'On the share';                       Test = { $_.HasPackage } },
+        [pscustomobject]@{ Name = 'In the site';                        Test = { $_.IsPublished } },
+        [pscustomobject]@{ Name = 'On the share and in the site';       Test = { $_.HasPackage -and $_.IsPublished } },
+        [pscustomobject]@{ Name = 'On the share, not in the site';      Test = { $_.HasPackage -and -not $_.IsPublished } },
+        [pscustomobject]@{ Name = 'In the site, not on the share';      Test = { $_.IsPublished -and -not $_.HasPackage } },
+        [pscustomobject]@{ Name = 'Changed since publishing';           Test = { $_.SourceChanged } },
+        [pscustomobject]@{ Name = 'Definition only';                    Test = { $_.HasDefinition -and -not $_.HasPackage -and -not $_.IsPublished } },
+        [pscustomobject]@{ Name = 'Without definition';                 Test = { -not $_.HasDefinition } }
+    )
+    $viewLabel = New-Object Windows.Controls.TextBlock
+    $viewLabel.Text = 'Show:'
+    $viewLabel.VerticalAlignment = 'Center'
+    $viewLabel.Margin = '0,0,6,0'
+    [Windows.Controls.DockPanel]::SetDock($viewLabel, 'Left')
+    $null = $top.Children.Add($viewLabel)
+
+    $viewBox = New-Object Windows.Controls.ComboBox
+    $viewBox.ItemsSource = @($views | ForEach-Object { $_.Name })
+    $viewBox.SelectedIndex = 0
+    $viewBox.Width = 240
+    $viewBox.Margin = '0,0,8,0'
+    $viewBox.VerticalContentAlignment = 'Center'
+    $viewBox.ToolTip = 'Only rows that are in the chosen place - the share, the site, or both'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($viewBox, 'View')
+    [Windows.Controls.DockPanel]::SetDock($viewBox, 'Left')
+    $null = $top.Children.Add($viewBox)
+
     $filterBox = New-Object Windows.Controls.TextBox
     $filterBox.Padding = '4'
     $filterBox.VerticalContentAlignment = 'Center'
@@ -138,18 +170,24 @@ function Show-InventoryDialog {
     [Windows.Controls.Grid]::SetRow($dataGrid, 1)
     $null = $grid.Children.Add($dataGrid)
 
-    $filterBox.Add_TextChanged({
+    # View and text filter are applied together, and the status line says how
+    # many of the rows are showing.
+    $applyFilter = {
+        $view   = $views[[Math]::Max(0, $viewBox.SelectedIndex)]
         $needle = $filterBox.Text
-        $items = $rows
+        $items  = @($rows | Where-Object $view.Test)
         if (-not [string]::IsNullOrWhiteSpace($needle)) {
-            $items = @($rows | Where-Object {
+            $items = @($items | Where-Object {
                 $row = $_
                 @(@('Name', 'Version', 'Publisher', 'Package', 'Site', 'Content') | Where-Object { [string]$row.$_ -like "*$needle*" }).Count -gt 0
             })
         }
         $dataGrid.ItemsSource = $null
         $dataGrid.ItemsSource = @($items)
-    })
+        $status.Text = $(if ($items.Count -eq $rows.Count) { $summary } else { '{0} of {1} shown - {2}' -f $items.Count, $rows.Count, $summary })
+    }
+    $filterBox.Add_TextChanged($applyFilter)
+    $viewBox.Add_SelectionChanged($applyFilter)
 
     # --- status line ---
     $status = New-Object Windows.Controls.TextBlock
@@ -160,10 +198,11 @@ function Show-InventoryDialog {
     $packages  = @($rows | Where-Object { $_.HasPackage }).Count
     $published = @($rows | Where-Object { $_.IsPublished }).Count
     $changed   = @($rows | Where-Object { $_.SourceChanged }).Count
-    $status.Text = ('{0} application(s) - {1} package(s) on {2} - {3} published{4}{5}' -f
-                        $rows.Count, $packages, $SourceRoot, $published,
-                        $(if ($changed) { " - $changed changed since publishing" } else { '' }),
-                        $(if (-not $SiteRead) { ' - the site was not read, the site column is unknown' } else { '' }))
+    $summary = ('{0} application(s) - {1} package(s) on {2} - {3} published{4}{5}' -f
+                    $rows.Count, $packages, $SourceRoot, $published,
+                    $(if ($changed) { " - $changed changed since publishing" } else { '' }),
+                    $(if (-not $SiteRead) { ' - the site was not read, the site column is unknown' } else { '' }))
+    $status.Text = $summary
     [Windows.Controls.Grid]::SetRow($status, 2)
     $null = $grid.Children.Add($status)
 
