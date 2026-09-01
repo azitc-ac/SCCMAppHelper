@@ -37,18 +37,22 @@ function Get-AppPackage {
     $results  = @()
 
     foreach ($dir in (Get-ChildItem -LiteralPath $workRoot -Directory -ErrorAction SilentlyContinue)) {
-        $contentPath = Get-PackageContentPath -PackageRoot $dir.FullName -Config $Config
-        $adtScript   = Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'
-        if (-not (Test-Path -LiteralPath $adtScript)) { continue }
+        # _DL is the download staging folder; anything else starting with an
+        # underscore or a dot is bookkeeping, not a package.
+        if ($dir.Name -like '_*' -or $dir.Name -like '.*') { continue }
 
-        $parsed = Split-AppFolderName -FolderName $dir.Name
+        $contentPath = Get-PackageContentPath -PackageRoot $dir.FullName -Config $Config
+        $adt         = Get-ADTScript -ContentRoot $contentPath
+        $parsed      = Split-AppFolderName -FolderName $dir.Name
 
         # What Files\ holds decides whether the package can install anything.
-        # Only the count is needed, so only metadata is read.
-        $filesPath  = Join-Path $contentPath 'Files'
+        # Only the count is needed, so only metadata is read. A folder without
+        # a PSADT script is Legacy: listed, so it is known to be there, and
+        # left alone, because nothing in it is understood.
         $filesCount = 0
-        if (Test-Path -LiteralPath $filesPath) {
-            try { $filesCount = @([System.IO.Directory]::EnumerateFiles($filesPath, '*', [System.IO.SearchOption]::AllDirectories)).Count }
+        $countRoot  = $(if ($adt) { Join-Path $contentPath 'Files' } else { $dir.FullName })
+        if (Test-Path -LiteralPath $countRoot) {
+            try { $filesCount = @([System.IO.Directory]::EnumerateFiles($countRoot, '*', [System.IO.SearchOption]::AllDirectories)).Count }
             catch { }
         }
 
@@ -57,8 +61,10 @@ function Get-AppPackage {
             AppVersion   = $parsed.Version
             PackageRoot  = $dir.FullName
             ContentPath  = $contentPath
+            Toolkit      = $(if ($adt) { $adt.Toolkit } else { '' })
+            IsLegacy     = (-not $adt)
             FilesCount   = $filesCount
-            LastModified = (Get-Item -LiteralPath $adtScript).LastWriteTime
+            LastModified = $(if ($adt) { (Get-Item -LiteralPath $adt.Path).LastWriteTime } else { $dir.LastWriteTime })
         }
     }
 
@@ -176,6 +182,8 @@ function Get-AppInventory {
             HasDefinition  = $false
             Definition     = '-'
             HasPackage     = $false
+            IsLegacy       = $false
+            Toolkit        = ''
             Package        = '-'
             PackageRoot    = ''
             ContentPath    = ''
@@ -219,12 +227,14 @@ function Get-AppInventory {
         if (-not $rows.Contains($key)) { $rows[$key] = & $newRow $package.AppName $package.AppVersion }
         $row = $rows[$key]
         $row.HasPackage  = $true
+        $row.IsLegacy    = $package.IsLegacy
+        $row.Toolkit     = $package.Toolkit
         $row.PackageRoot = $package.PackageRoot
         $row.ContentPath = $package.ContentPath
         $row.FilesCount  = $package.FilesCount
         $row.Modified    = $package.LastModified
-        $row.Package     = $(if ($package.FilesCount -gt 0) { 'Ready' } else { 'No files' })
-        if (-not $row.Publisher) { $row.Publisher = (Read-ADTMetadata -ContentRoot $package.ContentPath).Publisher }
+        $row.Package     = $(if ($package.IsLegacy) { 'Legacy' } elseif ($package.FilesCount -gt 0) { 'Ready' } else { 'No files' })
+        if (-not $row.Publisher -and -not $package.IsLegacy) { $row.Publisher = (Read-ADTMetadata -ContentRoot $package.ContentPath).Publisher }
     }
 
     # --- site ---
@@ -270,8 +280,12 @@ function Get-AppInventory {
         if ($siteRead -and -not $row.IsPublished) { $row.Site = 'Not published' }
 
         $detail = @()
-        $detail += $(if ($row.HasDefinition) { 'Definition: row in Apps.csv' } else { 'Definition: none - the package is imported on publish' })
-        $detail += $(if ($row.HasPackage) { 'Package: {0} ({1} file(s) in Files)' -f $row.PackageRoot, $row.FilesCount } else { 'Package: none - build it first' })
+        $detail += $(if ($row.HasDefinition) { 'Definition: row in Apps.csv' }
+                     elseif ($row.IsLegacy) { 'Definition: none' }
+                     else { 'Definition: none - the package is imported on Build or Publish' })
+        $detail += $(if ($row.IsLegacy) { 'Package: {0} - no PSADT script inside, so the tool does not touch it ({1} file(s))' -f $row.PackageRoot, $row.FilesCount }
+                     elseif ($row.HasPackage) { 'Package: {0} - PSADT {1}, {2} file(s) in Files' -f $row.PackageRoot, $row.Toolkit, $row.FilesCount }
+                     else { 'Package: none - build it first' })
         $detail += $(switch ($row.Site) {
             'Published'                 { 'Site: published by this tool, content unchanged since' }
             'Published, source changed' { 'Site: published by this tool, but the package changed since - publish again to send the new content' }
@@ -443,7 +457,7 @@ function Open-PackageForEditing {
     if ($Config.openEditorOnCreate) {
         Write-Host 'ToDo: check the Install & Uninstall sections, then press ENTER' -ForegroundColor Cyan
         $editor = if ($Config.editor) { $Config.editor } else { 'notepad' }
-        & $editor (Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1')
+        & $editor (Get-ADTScript -ContentRoot $contentPath).Path
         pause
     }
 }
@@ -567,6 +581,12 @@ function Edit-AppDefinition {
         $Config = (Get-ActiveConfig)
     )
 
+    if ($InventoryRow.IsLegacy -and -not $InventoryRow.HasDefinition) {
+        $null = Show-MessageDialog -Caption 'Legacy folder' -Buttons 'OK' -Icon 'Information' -Text (
+            "{0}`n`nholds no PSADT script, so there is nothing the tool could read a definition from or write one into. Add the application afresh, or put a PSADT structure into the folder." -f $InventoryRow.PackageRoot)
+        return $false
+    }
+
     $app  = ConvertTo-AppRecord -Source $InventoryRow.Row
     if (-not $InventoryRow.HasDefinition) {
         $app.Name    = $InventoryRow.Name
@@ -594,7 +614,7 @@ function Edit-AppDefinition {
         return $true
     }
 
-    if ($InventoryRow.HasPackage) {
+    if ($InventoryRow.HasPackage -and -not $InventoryRow.IsLegacy) {
         $null = New-AppPackage -App $edited -Config $Config -InstallerPath $script:EditDialogInstallerPath
     }
     return $true
@@ -637,6 +657,10 @@ function Build-AppPackages {
     $rows = @($InventoryRows)
     foreach ($row in $rows) {
         try {
+            if ($row.IsLegacy) {
+                Write-Warn ("[{0}] is a legacy folder without a PSADT script - nothing to build. Put a PSADT structure in it, or add the application afresh." -f $row.AppFullName)
+                continue
+            }
             if ($row.HasDefinition) {
                 $packageRoot = New-AppPackage -App (ConvertTo-AppRecord -Source $row.Row) -Config $Config
                 if (-not $row.HasPackage -and $rows.Count -eq 1) { Open-PackageForEditing -PackageRoot $packageRoot -Config $Config }
@@ -670,6 +694,10 @@ function Publish-AppPackages {
     $bulk = ($rows.Count -gt 1)
     foreach ($row in $rows) {
         try {
+            if ($row.IsLegacy) {
+                Write-Warn ("[{0}] is a legacy folder without a PSADT script - the tool cannot publish it." -f $row.AppFullName)
+                continue
+            }
             $packageRoot = $row.PackageRoot
             if (-not $row.HasPackage) {
                 if (-not $row.HasDefinition) { Write-Warn ("[{0}] has no package on the share - nothing to publish." -f $row.AppFullName); continue }

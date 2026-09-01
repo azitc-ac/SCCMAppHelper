@@ -452,10 +452,55 @@ function Get-PackageContentPath {
         $Config = (Get-ActiveConfig)
     )
 
-    if (Test-Path -LiteralPath (Join-Path $PackageRoot 'Content\Invoke-AppDeployToolkit.ps1')) { return (Join-Path $PackageRoot 'Content') }
-    if (Test-Path -LiteralPath (Join-Path $PackageRoot 'Invoke-AppDeployToolkit.ps1'))         { return $PackageRoot }
+    if (Get-ADTScript -ContentRoot (Join-Path $PackageRoot 'Content')) { return (Join-Path $PackageRoot 'Content') }
+    if (Get-ADTScript -ContentRoot $PackageRoot)                       { return $PackageRoot }
     if ($Config.packageLayout -eq 'Flat') { return $PackageRoot }
     return (Join-Path $PackageRoot 'Content')
+}
+
+<#
+    The PSADT script of a package, whichever toolkit generation built it:
+
+        4   Invoke-AppDeployToolkit.ps1, $adtSession block, Config\config.psd1
+        3   Deploy-Application.ps1, $appVendor variables, AppDeployToolkitConfig.xml
+
+    Where a package comes from does not matter - the older scripts, another
+    tool, a hand made folder - as long as it is "<Name> - <Version>" with a
+    PSADT structure inside. Returns $null for anything else, which the
+    inventory shows as Legacy and leaves alone.
+#>
+function Get-ADTScript {
+    param([Parameter(Mandatory = $true)][string]$ContentRoot)
+
+    $v4 = Join-Path $ContentRoot 'Invoke-AppDeployToolkit.ps1'
+    if (Test-Path -LiteralPath $v4) {
+        return [pscustomobject]@{ Path = $v4; Toolkit = '4'; Executable = 'Invoke-AppDeployToolkit.exe' }
+    }
+    $v3 = Join-Path $ContentRoot 'Deploy-Application.ps1'
+    if (Test-Path -LiteralPath $v3) {
+        return [pscustomobject]@{ Path = $v3; Toolkit = '3'; Executable = 'Deploy-Application.exe' }
+    }
+    return $null
+}
+
+<#
+    The install or uninstall command line of the deployment type. The
+    configured one names Invoke-AppDeployToolkit.exe; a PSADT 3 package is
+    started through Deploy-Application.exe with the same arguments.
+#>
+function Get-PackageCommandLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContentPath,
+        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall')][string]$Section,
+        $Config = (Get-ActiveConfig)
+    )
+
+    $command = $(if ($Section -eq 'Install') { [string]$Config.installCommand } else { [string]$Config.uninstallCommand })
+    $script  = Get-ADTScript -ContentRoot $ContentPath
+    if ($script -and $script.Toolkit -eq '3') {
+        $command = $command -replace 'Invoke-AppDeployToolkit(\.exe|\.ps1)?', 'Deploy-Application$1'
+    }
+    return $command
 }
 
 
@@ -561,16 +606,29 @@ function Set-ADTLogPath {
     )
 
     $configPath = Join-Path $ContentRoot 'Config\config.psd1'
-    if (-not (Test-Path -LiteralPath $configPath)) { throw "config.psd1 not found: $configPath" }
+    if (Test-Path -LiteralPath $configPath) {
+        # The PSADT template ships the Config folder read-only.
+        $configFolder = Get-Item -LiteralPath (Split-Path -Parent $configPath)
+        $configFolder.Attributes = ($configFolder.Attributes -band -bnot [System.IO.FileAttributes]::ReadOnly)
 
-    # The PSADT template ships the Config folder read-only.
-    $configFolder = Get-Item -LiteralPath (Split-Path -Parent $configPath)
-    $configFolder.Attributes = ($configFolder.Attributes -band -bnot [System.IO.FileAttributes]::ReadOnly)
+        $content = Get-Content -LiteralPath $configPath -Raw
+        $content = $content -replace "(?m)^\s*LogPath\s*=\s*'.*?'", "    LogPath = '$LogPath'"
+        $content = $content -replace "(?m)^\s*LogPathNoAdminRights\s*=\s*'.*?'", "    LogPathNoAdminRights = '$LogPath'"
+        Set-Content -LiteralPath $configPath -Value $content -Encoding UTF8
+        return $true
+    }
 
-    $content = Get-Content -LiteralPath $configPath -Raw
-    $content = $content -replace "(?m)^\s*LogPath\s*=\s*'.*?'", "    LogPath = '$LogPath'"
-    $content = $content -replace "(?m)^\s*LogPathNoAdminRights\s*=\s*'.*?'", "    LogPathNoAdminRights = '$LogPath'"
-    Set-Content -LiteralPath $configPath -Value $content -Encoding UTF8
+    # PSADT 3 keeps it in AppDeployToolkitConfig.xml.
+    $xmlPath = Join-Path $ContentRoot 'AppDeployToolkit\AppDeployToolkitConfig.xml'
+    if (Test-Path -LiteralPath $xmlPath) {
+        $content = Get-Content -LiteralPath $xmlPath -Raw
+        $content = $content -replace '<Toolkit_LogPath>[^<]*</Toolkit_LogPath>', "<Toolkit_LogPath>$LogPath</Toolkit_LogPath>"
+        Set-Content -LiteralPath $xmlPath -Value $content -Encoding UTF8
+        return $true
+    }
+
+    Write-Warn "No PSADT configuration found below [$ContentRoot] - the log path stays as it is."
+    return $false
 }
 
 function Set-ADTAppMetadata {
@@ -582,21 +640,36 @@ function Set-ADTAppMetadata {
         [string]$Author = $env:USERNAME
     )
 
-    $scriptPath = Join-Path $ContentRoot 'Invoke-AppDeployToolkit.ps1'
-    if (-not (Test-Path -LiteralPath $scriptPath)) { throw "Invoke-AppDeployToolkit.ps1 not found: $scriptPath" }
+    $adt = Get-ADTScript -ContentRoot $ContentRoot
+    if (-not $adt) { throw "No PSADT script found below: $ContentRoot" }
+    $scriptPath = $adt.Path
 
     $creationDate = Get-Date -Format 'yyyy-MM-dd'
     $script = Get-Content -LiteralPath $scriptPath
 
     # Empty values are skipped, so a zero-config MSI package keeps its empty
     # AppVendor / AppName / AppVersion while author and date are still stamped.
-    if ($Publisher) { $script = $script -replace "AppVendor = ''", "AppVendor = '$Publisher'" }
-    if ($Name)      { $script = $script -replace "AppName = ''", "AppName = '$Name'" }
-    if ($Version)   { $script = $script -replace "AppVersion = ''", "AppVersion = '$Version'" }
+    # Only empty fields are written - a package that already says who it is
+    # keeps saying so, whichever toolkit generation and whichever tool wrote it.
+    if ($adt.Toolkit -eq '4') {
+        if ($Publisher) { $script = $script -replace "AppVendor = ''", "AppVendor = '$Publisher'" }
+        if ($Name)      { $script = $script -replace "AppName = ''", "AppName = '$Name'" }
+        if ($Version)   { $script = $script -replace "AppVersion = ''", "AppVersion = '$Version'" }
 
-    $script = $script `
-        -replace "AppScriptDate = '2000-12-31'", "AppScriptDate = '$creationDate'" `
-        -replace "AppScriptAuthor = '<author name>'", "AppScriptAuthor = '$Author'"
+        $script = $script `
+            -replace "AppScriptDate = '2000-12-31'", "AppScriptDate = '$creationDate'" `
+            -replace "AppScriptAuthor = '<author name>'", "AppScriptAuthor = '$Author'"
+    }
+    else {
+        # PSADT 3: [String]$appVendor = '' and friends near the top of the script.
+        if ($Publisher) { $script = $script -replace "(?i)(\`$appVendor\s*=\s*)''", "`$1'$Publisher'" }
+        if ($Name)      { $script = $script -replace "(?i)(\`$appName\s*=\s*)''", "`$1'$Name'" }
+        if ($Version)   { $script = $script -replace "(?i)(\`$appVersion\s*=\s*)''", "`$1'$Version'" }
+
+        $script = $script `
+            -replace "(?i)(\`$appScriptDate\s*=\s*)'(|XX/XX/20XX)'", "`$1'$creationDate'" `
+            -replace "(?i)(\`$appScriptAuthor\s*=\s*)'(|<author name>)'", "`$1'$Author'"
+    }
 
     $script | Out-File -LiteralPath $scriptPath -Encoding utf8 -Force
 }
@@ -678,11 +751,50 @@ function Repair-CommandLine {
     })
 }
 
+<#
+    The lines of the install or uninstall section as they stand in the script -
+    whoever wrote them - without this tool's block markers. This is how a
+    package built elsewhere gets its commands into the definition: read them
+    out, put them in the row, and from then on the row is the source of truth.
+
+    The section runs from the marker comment to the next phase header, which
+    both toolkit generations draw as a line of "=" signs.
+#>
+function Read-PackageCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall')][string]$Section
+    )
+
+    if (-not (Test-Path -LiteralPath $FilePath)) { return @() }
+    $marker = $(if ($Section -eq 'Install') { '## <Perform Installation tasks here>' } else { '## <Perform Uninstallation tasks here>' })
+
+    $lines = @(Get-Content -LiteralPath $FilePath)
+    $found = @()
+    $inSection = $false
+    foreach ($line in $lines) {
+        if (-not $inSection) {
+            if ($line -like "*$marker*") { $inSection = $true }
+            continue
+        }
+        if ($line -match '^\s*##\*?={5,}' -or $line -match '^\s*## MARK:' -or $line -match '^\s*\[String\]\$installPhase\s*=') { break }
+        $trimmed = $line.Trim()
+        if (-not $trimmed) { continue }
+        if ($trimmed -like '# --- SCCMAppHelper * begin*' -or $trimmed -like '# --- SCCMAppHelper * end ---') { continue }
+        $found += $trimmed
+    }
+    return $found
+}
+
 function Set-PackageCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall')][string]$Section,
-        [string]$Command
+        [string]$Command,
+        # Importing a package built elsewhere: the lines somebody wrote by hand
+        # were read into the row first, so they are replaced by the block that
+        # holds the same lines - once, and only when they are the same.
+        [switch]$TakeOver
     )
 
     if (-not (Test-Path -LiteralPath $FilePath)) { return 'no script' }
@@ -757,7 +869,28 @@ function Set-PackageCommand {
         if ($lines[$i] -match '^\s*(Start-ADTProcess|Start-ADTMsiProcess|Execute-Process|Execute-MSI)\b' -and
             $lines[$i] -notmatch 'ExecuteDefaultMSISplat|DefaultMspFiles') { $handWritten += $lines[$i].Trim() }
     }
-    if ($handWritten.Count -gt 0) { return 'hand written' }
+    if ($handWritten.Count -gt 0) {
+        if (-not $TakeOver) { return 'hand written' }
+
+        # The section as it stands has to be exactly what the row says, or the
+        # difference is reported rather than one of the two thrown away.
+        $current = @(Read-PackageCommand -FilePath $FilePath -Section $Section)
+        $wanted  = @($Command -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() })
+        if (($current -join "`n") -ne ($wanted -join "`n")) { return 'hand written' }
+
+        # Replace the section - marker to the next phase header - with the block.
+        $endAt = $lines.Count
+        for ($i = $markerAt + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*##\*?={5,}' -or $lines[$i] -match '^\s*## MARK:' -or $lines[$i] -match '^\s*\[String\]\$installPhase\s*=') { $endAt = $i; break }
+        }
+        $new = @()
+        $new += $lines[0..$markerAt]
+        $new += $body
+        $new += ''
+        if ($endAt -lt $lines.Count) { $new += $lines[$endAt..($lines.Count - 1)] }
+        Set-Content -LiteralPath $FilePath -Value $new -Encoding UTF8
+        return 'taken over'
+    }
 
     $new = @()
     $new += $lines[0..$markerAt]
@@ -971,7 +1104,7 @@ function New-AppPackage {
         Remove-Item -LiteralPath $packageRoot -Recurse -Force
     }
 
-    $isNewTemplate = -not (Test-Path -LiteralPath (Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'))
+    $isNewTemplate = -not (Get-ADTScript -ContentRoot $contentPath)
 
     if ($isNewTemplate) {
         if (-not (Test-Path -LiteralPath $packageRoot)) { $null = New-Item -ItemType Directory -Path $packageRoot -Force }
@@ -986,8 +1119,9 @@ function New-AppPackage {
     }
 
     # Both steps only replace placeholders / fixed values and are safe to repeat.
-    Set-ADTLogPath -ContentRoot $contentPath -LogPath $Config.psadtLogPath
-    Write-Ok "PSADT log path set to [$($Config.psadtLogPath)]"
+    if (Set-ADTLogPath -ContentRoot $contentPath -LogPath $Config.psadtLogPath) {
+        Write-Ok "PSADT log path set to [$($Config.psadtLogPath)]"
+    }
 
     $author = $Config.packageAuthor
     if ([string]::IsNullOrWhiteSpace($author)) { $author = $env:USERNAME }
@@ -1000,18 +1134,19 @@ function New-AppPackage {
     }
     else {
         Set-ADTAppMetadata -ContentRoot $contentPath -Publisher $App.Publisher -Name $App.Name -Version $App.Version -Author $author
-        Write-Ok 'Invoke-AppDeployToolkit.ps1 metadata filled in.'
+        Write-Ok 'PSADT script metadata filled in.'
     }
 
     # The commands are rewritten on every build, so the Apps.csv row stays the
     # source of truth. Correcting a row used to change nothing at all, because
     # the injection ran once and never again.
-    $adtScript = Join-Path $contentPath 'Invoke-AppDeployToolkit.ps1'
+    $adtScript = (Get-ADTScript -ContentRoot $contentPath).Path
     foreach ($section in 'Install', 'Uninstall') {
         $command = $(if ($section -eq 'Install') { $App.InstallCmd } else { $App.UninstallCmd })
-        switch (Set-PackageCommand -FilePath $adtScript -Section $section -Command $command) {
+        switch (Set-PackageCommand -FilePath $adtScript -Section $section -Command $command -TakeOver) {
             'replaced'     { Write-Ok   "$section command updated from the app list." }
             'inserted'     { Write-Ok   "$section command written into the package." }
+            'taken over'   { Write-Ok   "$section command taken over into the tool's block." }
             'unchanged'    { Write-Info "$section command already matches the app list." }
             'hand written' { Write-Warn "The package already holds a command that this tool did not write - leaving it alone. The app list says: $command" }
             'no marker'    { Write-Info "No $section marker in the PSADT script - nothing written." }
@@ -1379,8 +1514,19 @@ function Read-ADTMetadata {
 
     $result = [pscustomobject]@{ Publisher = ''; Name = ''; Version = ''; Author = ''; Date = '' }
 
-    $scriptPath = Join-Path $ContentRoot 'Invoke-AppDeployToolkit.ps1'
-    if (-not (Test-Path -LiteralPath $scriptPath)) { return $result }
+    $adt = Get-ADTScript -ContentRoot $ContentRoot
+    if (-not $adt) { return $result }
+    $scriptPath = $adt.Path
+
+    # PSADT 3 keeps the same facts in plain variables near the top.
+    if ($adt.Toolkit -eq '3') {
+        $content = Get-Content -LiteralPath $scriptPath -Raw
+        $v3 = @{ appVendor = 'Publisher'; appName = 'Name'; appVersion = 'Version'; appScriptAuthor = 'Author'; appScriptDate = 'Date' }
+        foreach ($key in $v3.Keys) {
+            if ($content -match ("(?im)^\s*(\[string\])?\`$" + $key + "\s*=\s*'([^']*)'")) { $result.($v3[$key]) = $Matches[2] }
+        }
+        return $result
+    }
 
     $map = @{
         AppVendor       = 'Publisher'
@@ -1570,9 +1716,11 @@ function Import-AppPackage {
 
     Write-Step "Importing existing package: $folderName"
 
-    if (-not (Test-Path -LiteralPath (Join-Path $content 'Invoke-AppDeployToolkit.ps1'))) {
+    $adt = Get-ADTScript -ContentRoot $content
+    if (-not $adt) {
         throw "No PSADT script found in [$content] - this does not look like a package."
     }
+    Write-Info "PSADT $($adt.Toolkit) package: $(Split-Path -Leaf $adt.Path)"
 
     $existing = Get-PackageMetadata -PackageRoot $PackageRoot -Config $Config
     $row = Get-AppListRow -Name $parsed.Name -Version $parsed.Version
@@ -1608,6 +1756,18 @@ function Import-AppPackage {
     }
     if ($existing.publisher) { $app.Publisher = $existing.publisher }
 
+    # The commands as they stand in the script go into the row, so the row
+    # describes the package it names - and is editable from now on.
+    foreach ($section in 'Install', 'Uninstall') {
+        $column = "${section}Cmd"
+        if ($app.$column) { continue }
+        $found = @(Read-PackageCommand -FilePath $adt.Path -Section $section)
+        if ($found.Count -gt 0) {
+            $app.$column = ($found -join [Environment]::NewLine)
+            Write-Info ("{0} command read from the script: {1} line(s)" -f $section, $found.Count)
+        }
+    }
+
     # Ask only when something essential is missing and we are not in a bulk run.
     if ((-not $app.Publisher -or -not $app.Version) -and -not $Bulk) {
         $answer = Open-EditDialog -title "Import package: $folderName" -PropertyOrder $script:AppListColumns -item ([ordered]@{
@@ -1634,11 +1794,23 @@ function Import-AppPackage {
         $author = $Config.packageAuthor
         if ([string]::IsNullOrWhiteSpace($author)) { $author = $env:USERNAME }
         Set-ADTAppMetadata -ContentRoot $content -Publisher $app.Publisher -Name $app.Name -Version $app.Version -Author $author
-        Write-Ok 'Metadata written into Invoke-AppDeployToolkit.ps1 (empty fields only).'
+        Write-Ok ("Metadata written into {0} (empty fields only)." -f (Split-Path -Leaf $adt.Path))
+    }
+
+    # The hand written commands become the tool's block, so the row is the
+    # source of truth from here on. Same lines, only wrapped.
+    foreach ($section in 'Install', 'Uninstall') {
+        $command = $app."${section}Cmd"
+        if (-not $command) { continue }
+        switch (Set-PackageCommand -FilePath $adt.Path -Section $section -Command $command -TakeOver) {
+            'taken over'   { Write-Ok   "$section command taken over into the tool's block." }
+            'inserted'     { Write-Ok   "$section command written into the package." }
+            'hand written' { Write-Warn "The $section section differs from the row - left as it is." }
+        }
     }
 
     # Keep the master list complete - that is what the naming convention lives on.
-    if (-not $row) { Add-AppListRow -App $app }
+    if ($row) { Set-AppListRow -App $app } else { Add-AppListRow -App $app }
 
     $metadata = Get-PackageMetadata -PackageRoot $PackageRoot -Config $Config
     Write-Ok "Imported: $($metadata.appFullName)"
@@ -1754,8 +1926,8 @@ function Publish-CMApplication {
                 ApplicationName          = $appFullName
                 DeploymentTypeName       = $deploymentTypeName
                 ContentLocation          = $contentUnc
-                InstallCommand           = $Config.installCommand
-                UninstallCommand         = $Config.uninstallCommand
+                InstallCommand           = (Get-PackageCommandLine -ContentPath $contentPath -Section Install   -Config $Config)
+                UninstallCommand         = (Get-PackageCommandLine -ContentPath $contentPath -Section Uninstall -Config $Config)
                 InstallationBehaviorType = 'InstallForSystem'
                 LogonRequirementType     = 'WhetherOrNotUserLoggedOn'
                 Comment                  = (Get-ToolSignature)
@@ -1913,7 +2085,14 @@ function Publish-CMApplication {
                             -RefreshType Periodic -RefreshSchedule $schedule -ErrorAction Stop
                         Write-Ok "Collection created: $collectionName"
 
-                        $collectionFolder = Resolve-CMFolderPath -FolderPath $Config.collectionFolderPath -Config $Config -RootNode 'DeviceCollection'
+                        # Each collection definition may name its own console
+                        # folder - required and available deployments usually
+                        # live apart - and falls back to the site's folder.
+                        $folderPath = [string]$Config.collectionFolderPath
+                        if ($collectionDefinition.PSObject.Properties.Name -contains 'folderPath' -and -not [string]::IsNullOrWhiteSpace($collectionDefinition.folderPath)) {
+                            $folderPath = [string]$collectionDefinition.folderPath
+                        }
+                        $collectionFolder = Resolve-CMFolderPath -FolderPath $folderPath -Config $Config -RootNode 'DeviceCollection'
                         if ($collectionFolder -and (New-CMFolderPath -FolderPath $collectionFolder)) {
                             try { $null = Move-CMObject -FolderPath $collectionFolder -InputObject $collection -ErrorAction Stop }
                             catch { Write-Warn ("Could not move the collection: {0}" -f $_.Exception.Message) }

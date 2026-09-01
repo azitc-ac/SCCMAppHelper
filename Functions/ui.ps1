@@ -75,7 +75,8 @@ function Show-InventoryDialog {
         [pscustomobject]@{ Name = 'In the site, not on the share';      Test = { $_.IsPublished -and -not $_.HasPackage } },
         [pscustomobject]@{ Name = 'Changed since publishing';           Test = { $_.SourceChanged } },
         [pscustomobject]@{ Name = 'Definition only';                    Test = { $_.HasDefinition -and -not $_.HasPackage -and -not $_.IsPublished } },
-        [pscustomobject]@{ Name = 'Without definition';                 Test = { -not $_.HasDefinition } }
+        [pscustomobject]@{ Name = 'Without definition';                 Test = { -not $_.HasDefinition } },
+        [pscustomobject]@{ Name = 'Legacy (no PSADT)';                  Test = { $_.IsLegacy } }
     )
     $viewLabel = New-Object Windows.Controls.TextBlock
     $viewLabel.Text = 'Show:'
@@ -121,6 +122,7 @@ function Show-InventoryDialog {
             @{ Header = 'Publisher';   Binding = 'Publisher';   Width = 170 },
             @{ Header = 'Definition';  Binding = 'Definition';  Width = 80  },
             @{ Header = 'Package';     Binding = 'Package';     Width = 90  },
+            @{ Header = 'PSADT';       Binding = 'Toolkit';     Width = 55  },
             @{ Header = 'Site';        Binding = 'Site';        Width = 200 },
             @{ Header = 'Content';     Binding = 'Content';     Width = 150 },
             @{ Header = 'Deployments'; Binding = 'Deployments'; Width = 95  },
@@ -141,7 +143,7 @@ function Show-InventoryDialog {
                 $colours = $(if ($column.Binding -eq 'Site') {
                     @(@('Published', 'DarkGreen'), @('Published, source changed', 'DarkOrange'), @('Foreign', 'Firebrick'), @('Not published', 'Gray'), @('Unknown', 'Gray'))
                 } else {
-                    @(@('Ready', 'DarkGreen'), @('No files', 'DarkOrange'), @('-', 'Gray'))
+                    @(@('Ready', 'DarkGreen'), @('No files', 'DarkOrange'), @('Legacy', 'Firebrick'), @('-', 'Gray'))
                 })
                 foreach ($pair in $colours) {
                     $trigger = New-Object Windows.DataTrigger
@@ -312,11 +314,14 @@ function Show-InventoryDialog {
     $syncButtons = {
         $selected = @($dataGrid.SelectedItems | Where-Object { $_ -isnot [int] })
         $one = ($selected.Count -eq 1)
-        $editButton.IsEnabled    = $one
+        # A legacy folder - no PSADT script - is shown and not touched: nothing
+        # can be read from it, nothing written into it.
+        $usable = @($selected | Where-Object { -not $_.IsLegacy -or $_.HasDefinition })
+        $editButton.IsEnabled    = $one -and ($usable.Count -eq 1)
         $versionButton.IsEnabled = $one
         $deleteButton.IsEnabled  = (@($selected | Where-Object { $_.HasDefinition }).Count -gt 0)
-        $buildButton.IsEnabled   = (@($selected | Where-Object { $_.HasDefinition -or $_.HasPackage }).Count -gt 0)
-        $publishButton.IsEnabled = (@($selected | Where-Object { $_.HasDefinition -or $_.HasPackage }).Count -gt 0)
+        $buildButton.IsEnabled   = (@($usable | Where-Object { $_.HasDefinition -or $_.HasPackage }).Count -gt 0)
+        $publishButton.IsEnabled = (@($usable | Where-Object { -not $_.IsLegacy -and ($_.HasDefinition -or $_.HasPackage) }).Count -gt 0)
     }
     & $syncButtons
     $dataGrid.Add_SelectionChanged($syncButtons)
@@ -1005,8 +1010,108 @@ function Edit-SettingsDialog {
     $tabGeneral.Content = $scalarScroll
     $null = $tabs.Items.Add($tabGeneral)
 
-    # --- tab 2: complex values as JSON ---------------------------------------
-    $complexKeys = $config.PSObject.Properties | Where-Object { $_.Name -notin $scalarKeys } | Select-Object -ExpandProperty Name
+    # --- tab 2: the per-application collections ------------------------------
+    # One line per entry of "collections": name pattern, purpose, notification
+    # and the console folder. Required and available collections usually live
+    # in different folders, which is what the folder column is for; empty
+    # falls back to collectionFolderPath of the site.
+    $collectionRows  = New-Object System.Collections.ArrayList
+    $collectionPanel = New-Object Windows.Controls.StackPanel
+    $collectionPanel.Margin = '10'
+
+    $collectionHint = New-Object Windows.Controls.TextBlock
+    $collectionHint.TextWrapping = 'Wrap'
+    $collectionHint.Foreground = [System.Windows.Media.Brushes]::DimGray
+    $collectionHint.Margin = '0,0,0,8'
+    $collectionHint.Text = 'One collection per line is created for every application. {App} in the name becomes "Name - Version". ' +
+                           'Folder is the console folder below DeviceCollection, e.g. Deployment\Required - empty means collectionFolderPath of the site. ' +
+                           'A line with an empty name is dropped on save.'
+    $null = $collectionPanel.Children.Add($collectionHint)
+
+    $collectionHeader = New-Object Windows.Controls.Grid
+    foreach ($width in 260, 110, 130, 260) {
+        $column = New-Object Windows.Controls.ColumnDefinition
+        $column.Width = New-Object Windows.GridLength -ArgumentList $width
+        $null = $collectionHeader.ColumnDefinitions.Add($column)
+    }
+    $headerIndex = 0
+    foreach ($caption in 'Name pattern', 'Purpose', 'User notification', 'Folder') {
+        $text = New-Object Windows.Controls.TextBlock
+        $text.Text = $caption
+        $text.FontWeight = 'Bold'
+        $text.Margin = '2,0,8,4'
+        [Windows.Controls.Grid]::SetColumn($text, $headerIndex)
+        $null = $collectionHeader.Children.Add($text)
+        $headerIndex++
+    }
+    $null = $collectionPanel.Children.Add($collectionHeader)
+
+    $collectionLines = New-Object Windows.Controls.StackPanel
+    $null = $collectionPanel.Children.Add($collectionLines)
+
+    $addCollectionLine = {
+        param($entry)
+        $line = New-Object Windows.Controls.Grid
+        $line.Margin = '0,0,0,4'
+        foreach ($width in 260, 110, 130, 260) {
+            $column = New-Object Windows.Controls.ColumnDefinition
+            $column.Width = New-Object Windows.GridLength -ArgumentList $width
+            $null = $line.ColumnDefinitions.Add($column)
+        }
+
+        $nameBox = New-Object Windows.Controls.TextBox
+        $nameBox.Text = [string]$entry.namePattern
+        $nameBox.Margin = '0,0,8,0'
+        [Windows.Controls.Grid]::SetColumn($nameBox, 0)
+
+        $purposeBox = New-Object Windows.Controls.ComboBox
+        $purposeBox.ItemsSource = @('Required', 'Available')
+        $purposeBox.IsEditable = $true
+        $purposeBox.Text = [string]$entry.deployPurpose
+        $purposeBox.Margin = '0,0,8,0'
+        [Windows.Controls.Grid]::SetColumn($purposeBox, 1)
+
+        $notifyBox = New-Object Windows.Controls.ComboBox
+        $notifyBox.ItemsSource = @('DisplayAll', 'DisplaySoftwareCenterOnly', 'HideAll')
+        $notifyBox.IsEditable = $true
+        $notifyBox.Text = [string]$entry.userNotification
+        $notifyBox.Margin = '0,0,8,0'
+        [Windows.Controls.Grid]::SetColumn($notifyBox, 2)
+
+        $folderBox = New-Object Windows.Controls.TextBox
+        $folderBox.Text = $(if ($entry.PSObject.Properties.Name -contains 'folderPath') { [string]$entry.folderPath } else { '' })
+        $folderBox.Margin = '0,0,8,0'
+        [Windows.Controls.Grid]::SetColumn($folderBox, 3)
+
+        foreach ($control in @($nameBox, $purposeBox, $notifyBox, $folderBox)) { $null = $line.Children.Add($control) }
+        $null = $collectionLines.Children.Add($line)
+        $null = $collectionRows.Add([pscustomobject]@{ Name = $nameBox; Purpose = $purposeBox; Notify = $notifyBox; Folder = $folderBox })
+    }
+
+    foreach ($entry in @($config.collections)) { if ($entry) { & $addCollectionLine $entry } }
+
+    $addCollectionButton = New-Object Windows.Controls.Button
+    $addCollectionButton.Content = 'Add line'
+    $addCollectionButton.Padding = '12,4'
+    $addCollectionButton.HorizontalAlignment = 'Left'
+    $addCollectionButton.Margin = '0,6,0,0'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($addCollectionButton, 'AddCollection')
+    $addCollectionButton.Add_Click({
+        & $addCollectionLine ([pscustomobject]@{ namePattern = ''; deployPurpose = 'Available'; userNotification = 'DisplayAll'; folderPath = '' })
+    })
+    $null = $collectionPanel.Children.Add($addCollectionButton)
+
+    $collectionScroll = New-Object Windows.Controls.ScrollViewer
+    $collectionScroll.VerticalScrollBarVisibility = 'Auto'
+    $collectionScroll.Content = $collectionPanel
+
+    $tabCollections = New-Object Windows.Controls.TabItem
+    $tabCollections.Header = 'Collections'
+    $tabCollections.Content = $collectionScroll
+    $null = $tabs.Items.Add($tabCollections)
+
+    # --- tab 3: the remaining complex values as JSON --------------------------
+    $complexKeys = $config.PSObject.Properties | Where-Object { $_.Name -notin $scalarKeys -and $_.Name -ne 'collections' } | Select-Object -ExpandProperty Name
 
     $jsonBox = New-Object Windows.Controls.TextBox
     $jsonBox.AcceptsReturn = $true
@@ -1020,7 +1125,7 @@ function Edit-SettingsDialog {
     $jsonBox.Text = ($complexObject | ConvertTo-Json -Depth 8)
 
     $tabAdvanced = New-Object Windows.Controls.TabItem
-    $tabAdvanced.Header = 'Collections and deployments (JSON)'
+    $tabAdvanced.Header = 'Deployments and sites (JSON)'
     $tabAdvanced.Content = $jsonBox
     $null = $tabs.Items.Add($tabAdvanced)
 
@@ -1042,6 +1147,18 @@ function Edit-SettingsDialog {
                 }
                 else { $result[$key] = $control.Text }
             }
+
+            $collections = @()
+            foreach ($line in $collectionRows) {
+                if ([string]::IsNullOrWhiteSpace($line.Name.Text)) { continue }
+                $collections += [pscustomobject]@{
+                    namePattern      = $line.Name.Text.Trim()
+                    deployPurpose    = $line.Purpose.Text.Trim()
+                    userNotification = $line.Notify.Text.Trim()
+                    folderPath       = $line.Folder.Text.Trim()
+                }
+            }
+            $result['collections'] = $collections
 
             $complex = $jsonBox.Text | ConvertFrom-Json -ErrorAction Stop
             foreach ($property in $complex.PSObject.Properties) { $result[$property.Name] = $property.Value }
