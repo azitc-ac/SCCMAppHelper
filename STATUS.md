@@ -61,6 +61,27 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
 
+## The official winget index (2026-09-01, not yet run on Windows)
+
+`Functions\wingetindex.ps1` fetches `https://cdn.winget.microsoft.com/cache/source.msix`,
+takes `Public\index.db` out of it and searches that SQLite database through
+`winsqlite3.dll` from `System32` via a small P/Invoke helper compiled with `Add-Type`. The
+search covers id, name, moniker and normalised publisher; the versions of a package come
+from the index as well, so resolving the newest one costs no GitHub request any more.
+`Find-CatalogPackage` and `Get-CatalogPackageVersion` use the index first and fall back to
+the GitHub walk when it cannot be fetched or read. The winget dialog shows the index age and
+package count and has **Update index**; the index refreshes itself after a day. The folder
+`Config\winget-index` is ignored by git.
+
+What was checked here: the helper, the queries and the merge were run under PowerShell 7 on
+Linux against a database built in the client's 1.x schema (`ids`, `names`, `monikers`,
+`versions`, `manifest`, `norm_publishers`, `norm_publishers_map`, `metadata`), with the
+library name swapped to libsqlite3. **Not checked**: the download itself (the CDN is not
+reachable from the development session), the real `source.msix` layout and schema version,
+`winsqlite3.dll` on a site server, and `Add-Type` compiling the helper under Windows
+PowerShell 5.1. If the index turns out to carry a schema this reader does not understand,
+the search falls back to the GitHub walk and says so.
+
 ## Five columns (2026-09-01)
 
 The list is down to Application, Version, Publisher, Status and Site. Status is one value
