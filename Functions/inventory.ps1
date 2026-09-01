@@ -56,6 +56,14 @@ function Get-AppPackage {
             catch { }
         }
 
+        # The path length as the site will see it - the server name is part of
+        # every path, so the same package can fit on one site and not another.
+        $measure = [pscustomobject]@{ Longest = 0; Overlong = 0; Worst = ''; Limit = 259 }
+        if ($adt) {
+            $unc = ConvertTo-CMContentPath -Path $contentPath -Config $Config
+            $measure = Measure-ContentPath -ContentPath $contentPath -ContentUnc $unc
+        }
+
         $results += [pscustomobject]@{
             AppName      = $parsed.Name
             AppVersion   = $parsed.Version
@@ -64,6 +72,9 @@ function Get-AppPackage {
             Toolkit      = $(if ($adt) { $adt.Toolkit } else { '' })
             IsLegacy     = (-not $adt)
             FilesCount   = $filesCount
+            LongestPath  = $measure.Longest
+            OverlongFiles = $measure.Overlong
+            WorstPath    = $measure.Worst
             LastModified = $(if ($adt) { (Get-Item -LiteralPath $adt.Path).LastWriteTime } else { $dir.LastWriteTime })
         }
     }
@@ -188,6 +199,9 @@ function Get-AppInventory {
             PackageRoot    = ''
             ContentPath    = ''
             FilesCount     = 0
+            LongestPath    = 0
+            OverlongFiles  = 0
+            WorstPath      = ''
             Modified       = $null
             IsPublished    = $false
             Origin         = ''
@@ -234,6 +248,9 @@ function Get-AppInventory {
         $row.PackageRoot = $package.PackageRoot
         $row.ContentPath = $package.ContentPath
         $row.FilesCount  = $package.FilesCount
+        $row.LongestPath = $package.LongestPath
+        $row.OverlongFiles = $package.OverlongFiles
+        $row.WorstPath   = $package.WorstPath
         $row.Modified    = $package.LastModified
         $row.Package     = $(if ($package.IsLegacy) { 'Legacy' } elseif ($package.FilesCount -gt 0) { 'Ready' } else { 'No files' })
         if (-not $row.Publisher -and -not $package.IsLegacy) { $row.Publisher = (Read-ADTMetadata -ContentRoot $package.ContentPath).Publisher }
@@ -287,6 +304,7 @@ function Get-AppInventory {
         $row.Status =
             if     ($row.IsLegacy)                                    { 'Legacy' }
             elseif ($row.IsPublished -and $row.Origin -ne 'this tool') { 'Foreign' }
+            elseif ($row.OverlongFiles -gt 0)                          { 'Path too long' }
             elseif ($row.IsPublished -and -not $row.HasPackage)        { 'Published, no package' }
             elseif ($row.IsPublished -and $row.SourceChanged)          { 'Published, changed' }
             elseif ($row.IsPublished)                                  { 'Published' }
@@ -320,6 +338,11 @@ function Get-AppInventory {
             default                     { 'Site: not read' }
         })
         if ($row.IsPublished) { $detail += ('Content: {0} - Deployments: {1}' -f $row.Content, $row.Deployments) }
+        if ($row.OverlongFiles -gt 0) {
+            $detail += ('Path: {0} file(s) past 259 characters over UNC, longest {1} - shorten by {2}, e.g. by renaming the folder. ConfigMgr would report "could not find file".' -f
+                $row.OverlongFiles, $row.LongestPath, ($row.LongestPath - 259))
+        }
+        elseif ($row.HasPackage -and -not $row.IsLegacy) { $detail += ('Path: longest {0} of 259 characters over UNC' -f $row.LongestPath) }
         $row.Detail = ($detail -join [Environment]::NewLine)
     }
 
@@ -592,6 +615,16 @@ function Add-AppFromSource {
     Set-AppListRow -App $app
     $packageRoot = New-AppPackage -App $app -Config $Config -InstallerPath $installer
     if (-not $installer) { Open-PackageForEditing -PackageRoot $packageRoot -Config $Config }
+
+    # Said in the window too, not only on the console: the package exists now,
+    # and it is the moment to rename it, before anything refers to it.
+    $contentPath = Get-PackageContentPath -PackageRoot $packageRoot -Config $Config
+    $measure = Measure-ContentPath -ContentPath $contentPath -ContentUnc (ConvertTo-CMContentPath -Path $contentPath -Config $Config)
+    if ($measure.Overlong -gt 0) {
+        $null = Show-MessageDialog -Caption 'Path too long' -Buttons 'OK' -Icon 'Warning' -Text (
+            "The package is built, but {0} file(s) in it are past the 259 character path limit once ConfigMgr addresses the content over UNC. The longest is {1} characters:`n`n...{2}`n`nShorten it by at least {3} characters - a shorter Name or Version is usually enough - or publishing will be refused." -f
+            $measure.Overlong, $measure.Longest, $measure.Worst.Substring([Math]::Max(0, $measure.Worst.Length - 90)), ($measure.Longest - $measure.Limit))
+    }
     return $packageRoot
 }
 
@@ -610,6 +643,12 @@ function Get-InventoryRowInfo {
         $info['PSADT'] = $(if ($InventoryRow.IsLegacy) { 'none - legacy folder' } else { 'generation ' + $InventoryRow.Toolkit })
         $info['Files'] = '{0} file(s)' -f $InventoryRow.FilesCount
         if ($InventoryRow.Modified) { $info['Modified'] = ([datetime]$InventoryRow.Modified).ToString('yyyy-MM-dd HH:mm') }
+        if (-not $InventoryRow.IsLegacy) {
+            $info['Path'] = $(if ($InventoryRow.OverlongFiles -gt 0) {
+                '{0} file(s) past 259 characters over UNC - longest {1}, shorten by {2}: ...{3}' -f $InventoryRow.OverlongFiles, $InventoryRow.LongestPath,
+                    ($InventoryRow.LongestPath - 259), ([string]$InventoryRow.WorstPath).Substring([Math]::Max(0, ([string]$InventoryRow.WorstPath).Length - 60))
+            } else { 'longest {0} of 259 characters over UNC' -f $InventoryRow.LongestPath })
+        }
     }
     $site = [string]$InventoryRow.Site
     if ($InventoryRow.SiteInfo -and $InventoryRow.SiteInfo -ne 'not read') { $site += ' - ' + $InventoryRow.SiteInfo }

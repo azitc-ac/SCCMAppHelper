@@ -58,6 +58,7 @@ come and what is in the way, checked in this order:
 | --- | --- | --- |
 | `Legacy` | a folder without a PSADT script inside | add the application afresh |
 | `Foreign` | an application of that name exists, but this tool did not create it; publishing overwrites its detection | |
+| `Path too long` | a file in the package is past 259 characters once addressed over UNC; publishing would be refused | rename the folder, or shorten inside |
 | `Published, no package` | published by this tool, the folder is gone | retire, or build again |
 | `Published, changed` | the package folder differs from what the site last received | publish again |
 | `Published` | all in step | |
@@ -280,8 +281,12 @@ package is read from the package itself, so both keep working and nothing has to
 
 ### Path length
 
-Publishing stops before anything is created when a file would land past 259 characters once
-the content is addressed over UNC, and names the files.
+Every package on the share is measured when the list is read - the longest path as the site
+will address it, over UNC - and one past 259 characters shows as `Path too long`, with the
+worst file and the number of characters to cut in the tooltip and in the dialog. The same
+measurement runs when a package is built, so an application added from winget or from a file
+says so in a message right away, while renaming is still cheap. Publishing stops before
+anything is created when a file would still land past the limit, and names the files.
 
 The local path is not what decides it - the site reaches the package through the content
 share, so the **server name is part of every path**. The deepest file of an SQL Server
