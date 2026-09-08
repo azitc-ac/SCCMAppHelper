@@ -224,6 +224,11 @@ disabled where nothing belongs in it:
 | `File` | the full path of the installed file | yours |
 | `Script` | nothing - `Content\SupportFiles\detection.ps1` | yours |
 
+Picking `File` puts `%ProgramFiles%\` into the empty field as a starting point, and takes it
+back out if the method changes again. It is a stepping stone, not an answer: OK refuses a path
+that is still only that, ends at a folder, or is empty, and says what is missing. Left as it
+was, ConfigMgr would look for a file called `ProgramFiles` on every client and never find it.
+
 ## winget as a source
 
 Behind **Add... -> From winget**, **New version...** and the **From winget...** button of the
