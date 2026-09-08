@@ -33,7 +33,11 @@ function Show-InventoryDialog {
         [Parameter(Mandatory = $true)]$Inventory,
         [string]$Title = 'SCCMAppHelper',
         [string]$SourceRoot = '',
-        [bool]$SiteRead = $true
+        [bool]$SiteRead = $true,
+        # Application names to select when the window opens. The window is built
+        # again after every action, and losing the row that was just worked on
+        # meant finding it again each time.
+        [string[]]$Select = @()
     )
 
     $rows = @($Inventory)
@@ -333,6 +337,23 @@ function Show-InventoryDialog {
 
     $window.Content = $grid
     $window.Add_Closing({ if ($null -eq $window.Tag) { $window.Tag = [pscustomobject]@{ Action = 'Closed'; Source = ''; Selection = @() } } })
+
+    # Restore the selection once the grid has its containers - a row the current
+    # view filters out simply is not there to select, which is answer enough.
+    if ($Select.Count -gt 0) {
+        $window.Add_Loaded({
+            try {
+                $wanted = @($dataGrid.ItemsSource | Where-Object { $Select -contains $_.AppFullName })
+                if ($wanted.Count -eq 0) { return }
+
+                $dataGrid.SelectedItems.Clear()
+                foreach ($row in $wanted) { $null = $dataGrid.SelectedItems.Add($row) }
+                $dataGrid.ScrollIntoView($wanted[0])
+                $null = $dataGrid.Focus()
+            }
+            catch { }   # a selection that cannot be restored is not worth a message
+        })
+    }
 
     $null = $window.ShowDialog()
     return $window.Tag
