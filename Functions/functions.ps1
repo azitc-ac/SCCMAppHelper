@@ -413,9 +413,18 @@ function Update-AppListSchema {
         $row
     }
 
-    $order = $script:AppListColumns + ($existingColumns | Where-Object { $_ -notin $script:AppListColumns })
-    $upgraded |
-        Sort-Object Name, Version |
+    $order  = $script:AppListColumns + ($existingColumns | Where-Object { $_ -notin $script:AppListColumns })
+    $sorted = @($upgraded | Sort-Object Name, Version)
+
+    # This runs on every read of the list, and it used to write the file every
+    # time - a write to the share for a question that is almost always "nothing
+    # to do". The file is only rewritten when a column is missing or the rows
+    # are genuinely out of order.
+    $before = ($rows    | ForEach-Object { '{0}|{1}' -f $_.Name, $_.Version }) -join "`n"
+    $after  = ($sorted  | ForEach-Object { '{0}|{1}' -f $_.Name, $_.Version }) -join "`n"
+    if (-not $missing -and $before -eq $after) { return }
+
+    $sorted |
         Select-Object -Property $order |
         Export-Csv -LiteralPath $CsvPath -Delimiter ';' -NoTypeInformation -Encoding UTF8
 
@@ -551,24 +560,162 @@ function Get-PackageCommandLine {
     The fingerprint is kept in the deployment type comment, which Set-CM
     ScriptDeploymentType writes without touching the content object.
 #>
+function Measure-ContentFolder {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContentPath,
+        # Given: the path length is measured as the site will see it.
+        [string]$ContentUnc,
+        # Given: files below this path are counted separately - that is what
+        # says whether a package has an installer at all.
+        [string]$FilesPath,
+        [int]$Limit = 259
+    )
+
+    $scan = [pscustomobject]@{
+        Fingerprint = ''
+        FilesCount  = 0
+        TotalFiles  = 0
+        Longest     = 0
+        Overlong    = 0
+        Worst       = ''
+        Limit       = $Limit
+    }
+    if (-not (Test-Path -LiteralPath $ContentPath)) { return $scan }
+
+    $local     = $ContentPath.TrimEnd('\')
+    $prefix    = $(if ($ContentUnc) { $ContentUnc.TrimEnd('\') } else { '' })
+    $filesRoot = $(if ($FilesPath) { $FilesPath.TrimEnd('\') + '\' } else { '' })
+
+    $bytes  = [long]0
+    $newest = [long]0
+    # Counted separately on purpose: the fingerprint counts the files it could
+    # actually stat, exactly as it did when it was its own function. The
+    # deployment types on the site carry fingerprints in that shape, and a
+    # different count would report every published package as changed.
+    $statted = 0
+
+    try {
+        foreach ($file in [System.IO.Directory]::EnumerateFiles($local, '*', [System.IO.SearchOption]::AllDirectories)) {
+            $scan.TotalFiles++
+
+            try {
+                $info = [System.IO.FileInfo]::new($file)
+                $statted++
+                $bytes += $info.Length
+                if ($info.LastWriteTimeUtc.Ticks -gt $newest) { $newest = $info.LastWriteTimeUtc.Ticks }
+            }
+            catch { }   # a file we cannot stat simply does not count towards the sum
+
+            if ($filesRoot -and $file.StartsWith($filesRoot, [System.StringComparison]::OrdinalIgnoreCase)) { $scan.FilesCount++ }
+
+            if ($prefix) {
+                $length = $prefix.Length + ($file.Length - $local.Length)
+                if ($length -gt $scan.Longest) { $scan.Longest = $length; $scan.Worst = $file.Substring($local.Length) }
+                if ($length -gt $Limit) { $scan.Overlong++ }
+            }
+        }
+    }
+    catch { }
+
+    $scan.Fingerprint = '{0}f/{1}b/{2}' -f $statted, $bytes, $newest
+    if (-not $filesRoot) { $scan.FilesCount = $scan.TotalFiles }
+    return $scan
+}
+
+<#
+    The scan of a package, remembered for the rest of the session.
+
+    The list is read again after every action, and walking a share of packages
+    three times over - once for the file count, once for the path length, once
+    for the fingerprint - was most of the wait. The walk happens once now, and
+    the result is kept until something changes it: Refresh drops everything,
+    and an action that touches a package drops that package
+    (Clear-InventoryCache).
+#>
+$script:PackageScanCache = @{}
+
+function Get-PackageScan {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContentPath,
+        [string]$ContentUnc,
+        [string]$FilesPath,
+        [switch]$Force
+    )
+
+    $key = $ContentPath.ToLowerInvariant()
+    if (-not $Force -and $script:PackageScanCache.ContainsKey($key)) { return $script:PackageScanCache[$key] }
+
+    $scan = Measure-ContentFolder -ContentPath $ContentPath -ContentUnc $ContentUnc -FilesPath $FilesPath
+    $script:PackageScanCache[$key] = $scan
+    return $scan
+}
+
+<#
+    The publisher a package carries in its own PSADT script, for the rows that
+    have no definition to take it from.
+
+    Read-ADTMetadata parses the whole script through the AST, which is right
+    when the values are about to be written back but far too much for filling
+    one column of a list: it was 40 ms per package, on every read. Here the
+    line is picked out of the text and the answer is kept for the session.
+#>
+$script:PackagePublisherCache = @{}
+
+function Get-PackagePublisher {
+    param([Parameter(Mandatory = $true)][string]$ContentPath)
+
+    $key = $ContentPath.ToLowerInvariant()
+    if ($script:PackagePublisherCache.ContainsKey($key)) { return $script:PackagePublisherCache[$key] }
+
+    $publisher = ''
+    $script = Get-ADTScript -ContentRoot $ContentPath
+    if ($script) {
+        try {
+            $text = Get-Content -LiteralPath $script.Path -Raw -ErrorAction Stop
+            if ($text -match "AppVendor\s*=\s*['`"]([^'`"]*)['`"]") { $publisher = $Matches[1] }
+        }
+        catch { }
+    }
+
+    $script:PackagePublisherCache[$key] = $publisher
+    return $publisher
+}
+
+<#
+    Drops what the inventory remembers. Without arguments: everything, which is
+    what the Refresh button does.
+#>
+function Clear-InventoryCache {
+    param(
+        [string[]]$ContentPath,
+        [switch]$Site
+    )
+
+    if (-not $ContentPath -and -not $Site) {
+        $script:PackageScanCache = @{}
+        $script:PackagePublisherCache = @{}
+        $script:SiteStateCache = $null
+        $script:SiteStateCacheKey = ''
+        return
+    }
+
+    foreach ($path in @($ContentPath)) {
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        $key = $path.ToLowerInvariant()
+        if ($script:PackageScanCache.ContainsKey($key)) { $null = $script:PackageScanCache.Remove($key) }
+        if ($script:PackagePublisherCache.ContainsKey($key)) { $null = $script:PackagePublisherCache.Remove($key) }
+    }
+
+    if ($Site) {
+        $script:SiteStateCache = $null
+        $script:SiteStateCacheKey = ''
+    }
+}
+
 function Get-ContentFingerprint {
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path)) { return '' }
-
-    $count = 0
-    $bytes = [long]0
-    $newest = [long]0
-    foreach ($file in [System.IO.Directory]::EnumerateFiles($Path, '*', [System.IO.SearchOption]::AllDirectories)) {
-        try {
-            $info = [System.IO.FileInfo]::new($file)
-            $count++
-            $bytes += $info.Length
-            if ($info.LastWriteTimeUtc.Ticks -gt $newest) { $newest = $info.LastWriteTimeUtc.Ticks }
-        }
-        catch { }   # a file we cannot stat simply does not count towards the sum
-    }
-    return ('{0}f/{1}b/{2}' -f $count, $bytes, $newest)
+    return (Measure-ContentFolder -ContentPath $Path).Fingerprint
 }
 
 function Get-DeploymentTypeFingerprint {
@@ -643,20 +790,7 @@ function Measure-ContentPath {
         [int]$Limit = 259
     )
 
-    $result = [pscustomobject]@{ Longest = 0; Overlong = 0; Worst = ''; Limit = $Limit }
-    if (-not (Test-Path -LiteralPath $ContentPath)) { return $result }
-
-    $prefix = $ContentUnc.TrimEnd('\')
-    $local  = $ContentPath.TrimEnd('\')
-    try {
-        foreach ($file in [System.IO.Directory]::EnumerateFiles($local, '*', [System.IO.SearchOption]::AllDirectories)) {
-            $length = $prefix.Length + ($file.Length - $local.Length)
-            if ($length -gt $result.Longest) { $result.Longest = $length; $result.Worst = $file.Substring($local.Length) }
-            if ($length -gt $Limit) { $result.Overlong++ }
-        }
-    }
-    catch { }
-    return $result
+    return (Measure-ContentFolder -ContentPath $ContentPath -ContentUnc $ContentUnc -Limit $Limit)
 }
 
 function Set-ADTLogPath {

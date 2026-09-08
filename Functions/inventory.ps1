@@ -45,24 +45,15 @@ function Get-AppPackage {
         $adt         = Get-ADTScript -ContentRoot $contentPath
         $parsed      = Split-AppFolderName -FolderName $dir.Name
 
-        # What Files\ holds decides whether the package can install anything.
-        # Only the count is needed, so only metadata is read. A folder without
-        # a PSADT script is Legacy: listed, so it is known to be there, and
-        # left alone, because nothing in it is understood.
-        $filesCount = 0
-        $countRoot  = $(if ($adt) { Join-Path $contentPath 'Files' } else { $dir.FullName })
-        if (Test-Path -LiteralPath $countRoot) {
-            try { $filesCount = @([System.IO.Directory]::EnumerateFiles($countRoot, '*', [System.IO.SearchOption]::AllDirectories)).Count }
-            catch { }
-        }
-
-        # The path length as the site will see it - the server name is part of
-        # every path, so the same package can fit on one site and not another.
-        $measure = [pscustomobject]@{ Longest = 0; Overlong = 0; Worst = ''; Limit = 259 }
-        if ($adt) {
-            $unc = ConvertTo-CMContentPath -Path $contentPath -Config $Config
-            $measure = Measure-ContentPath -ContentPath $contentPath -ContentUnc $unc
-        }
+        # One walk of the package answers three questions at once: what Files\
+        # holds - which decides whether the package can install anything - how
+        # long the longest path is once the site addresses it, and the
+        # fingerprint the site column compares against. A folder without a PSADT
+        # script is Legacy: listed, so it is known to be there, and left alone,
+        # because nothing in it is understood.
+        $unc = $(if ($adt) { ConvertTo-CMContentPath -Path $contentPath -Config $Config } else { '' })
+        $scan = Get-PackageScan -ContentPath $contentPath -ContentUnc $unc `
+            -FilesPath $(if ($adt) { Join-Path $contentPath 'Files' } else { '' })
 
         $results += [pscustomobject]@{
             AppName      = $parsed.Name
@@ -71,10 +62,11 @@ function Get-AppPackage {
             ContentPath  = $contentPath
             Toolkit      = $(if ($adt) { $adt.Toolkit } else { '' })
             IsLegacy     = (-not $adt)
-            FilesCount   = $filesCount
-            LongestPath  = $measure.Longest
-            OverlongFiles = $measure.Overlong
-            WorstPath    = $measure.Worst
+            FilesCount   = $scan.FilesCount
+            LongestPath  = $scan.Longest
+            OverlongFiles = $scan.Overlong
+            WorstPath    = $scan.Worst
+            Fingerprint  = $scan.Fingerprint
             LastModified = $(if ($adt) { (Get-Item -LiteralPath $adt.Path).LastWriteTime } else { $dir.LastWriteTime })
         }
     }
@@ -93,7 +85,18 @@ function Get-AppPackage {
     changed since (see Get-ContentFingerprint).
 #>
 function Get-CMApplicationState {
-    param($Config = (Get-ActiveConfig))
+    param(
+        $Config = (Get-ActiveConfig),
+        [switch]$Force
+    )
+
+    # Three provider calls that take seconds on a grown site, for a list that is
+    # read again after every action. Kept until something changes it - see
+    # Clear-InventoryCache - and keyed by site code, so switching sites in the
+    # tools menu cannot hand back the wrong one.
+    if (-not $Force -and $script:SiteStateCache -and $script:SiteStateCacheKey -eq [string]$Config.siteCode) {
+        return $script:SiteStateCache
+    }
 
     $signature = Get-ToolSignaturePattern
 
@@ -105,12 +108,11 @@ function Get-CMApplicationState {
             $fingerprint = ''
             if ($xml -match 'content\s+(?<fp>\d+f/\d+b/\d+)') { $fingerprint = $Matches['fp'] }
 
+            # Read out of the text rather than through [xml]: loading the whole
+            # package XML into a DOM for one element cost more than the rest of
+            # this loop together, once per application on the site.
             $location = ''
-            try {
-                $node = ([xml]$xml).SelectSingleNode('//*[local-name()="DeploymentType"]//*[local-name()="Content"]/*[local-name()="Location"]')
-                if ($node) { $location = $node.InnerText }
-            }
-            catch { }
+            if ($xml -match '<Location>(?<loc>[^<]*)</Location>') { $location = $Matches['loc'] }
 
             $result[$application.LocalizedDisplayName] = [pscustomobject]@{
                 AppName     = $application.LocalizedDisplayName
@@ -158,6 +160,8 @@ function Get-CMApplicationState {
         return $result
     }
 
+    $script:SiteStateCache    = $state
+    $script:SiteStateCacheKey = [string]$Config.siteCode
     return $state
 }
 
@@ -202,6 +206,7 @@ function Get-AppInventory {
             LongestPath    = 0
             OverlongFiles  = 0
             WorstPath      = ''
+            Fingerprint    = ''
             Modified       = $null
             IsPublished    = $false
             Origin         = ''
@@ -230,13 +235,17 @@ function Get-AppInventory {
     }
 
     # --- packages ---
+    # Timed, because how long this takes depends on the share and cannot be
+    # guessed from here - it is the number to look at when the list feels slow.
     $workRoot = ''
     $packages = @()
+    $shareTimer = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $workRoot = Get-PackageWorkRoot -Config $Config
         $packages = @(Get-AppPackage -Config $Config)
     }
     catch { Write-Warn ("The source share is not reachable - only the definitions are listed: {0}" -f $_.Exception.Message) }
+    $shareTimer.Stop()
 
     foreach ($package in $packages) {
         $key = & $keyOf $package.AppName $package.AppVersion
@@ -251,13 +260,15 @@ function Get-AppInventory {
         $row.LongestPath = $package.LongestPath
         $row.OverlongFiles = $package.OverlongFiles
         $row.WorstPath   = $package.WorstPath
+        $row.Fingerprint = $package.Fingerprint
         $row.Modified    = $package.LastModified
         $row.Package     = $(if ($package.IsLegacy) { 'Legacy' } elseif ($package.FilesCount -gt 0) { 'Ready' } else { 'No files' })
-        if (-not $row.Publisher -and -not $package.IsLegacy) { $row.Publisher = (Read-ADTMetadata -ContentRoot $package.ContentPath).Publisher }
+        if (-not $row.Publisher -and -not $package.IsLegacy) { $row.Publisher = Get-PackagePublisher -ContentPath $package.ContentPath }
     }
 
     # --- site ---
     $siteRead = $false
+    $siteTimer = [System.Diagnostics.Stopwatch]::StartNew()
     if (-not $NoSiteLookup) {
         try {
             $state = Get-CMApplicationState -Config $Config
@@ -281,8 +292,9 @@ function Get-AppInventory {
                     $row.Site = 'Foreign'
                 }
                 elseif ($row.HasPackage -and $entry.Fingerprint) {
-                    $current = Get-ContentFingerprint -Path $row.ContentPath
-                    $row.SourceChanged = ($current -ne $entry.Fingerprint)
+                    # From the walk the package already had - this used to be a
+                    # third pass over every published package.
+                    $row.SourceChanged = ($row.Fingerprint -ne $entry.Fingerprint)
                     $row.Site = $(if ($row.SourceChanged) { 'Published, source changed' } else { 'Published' })
                 }
                 else {
@@ -294,6 +306,9 @@ function Get-AppInventory {
             Write-Warn ("Could not read the applications from the site - the site column stays unknown: {0}" -f $_.Exception.Message)
         }
     }
+    $siteTimer.Stop()
+
+    Write-Info ("share {0:N1} s, site {1:N1} s" -f $shareTimer.Elapsed.TotalSeconds, $siteTimer.Elapsed.TotalSeconds)
 
     foreach ($row in $rows.Values) {
         if ($siteRead -and -not $row.IsPublished) { $row.Site = 'Not published' }
@@ -808,23 +823,33 @@ function Invoke-InventoryAction {
     $selection = @($Choice.Selection)
     $first     = $selection | Select-Object -First 1
 
+    # What an action invalidates of what the inventory remembers. Everything
+    # not listed here - opening a folder, deleting a definition, a cancelled
+    # dialog - leaves the share and the site untouched, so the list comes back
+    # without walking either again.
+    $touched = @($selection | ForEach-Object { $_.ContentPath } | Where-Object { $_ })
+    $touchedAll = @($selection | Where-Object { -not $_.HasPackage }).Count -gt 0
+
     switch ($Choice.Action) {
         'Add' {
             Write-Step ("Add application from {0}" -f $Choice.Source.ToLower())
             try { $null = Add-AppFromSource -Source $Choice.Source -Config $Config }
             catch { Write-Fail $_.Exception.Message; pause }
+            Clear-InventoryCache                                    # a folder appeared
         }
         'NewVersion' {
             if (-not $first) { break }
             Write-Step ("New version of {0}" -f $first.Name)
             try { $null = Add-AppFromSource -Source $Choice.Source -Template (ConvertTo-AppRecord -Source $(if ($first.Row) { $first.Row } else { $first })) -Config $Config }
             catch { Write-Fail $_.Exception.Message; pause }
+            Clear-InventoryCache                                    # a folder appeared
         }
         'Edit' {
             if (-not $first) { break }
             Write-Step ("Edit {0}" -f $first.AppFullName)
             try { $null = Edit-AppDefinition -InventoryRow $first -Config $Config }
             catch { Write-Fail $_.Exception.Message; pause }
+            if ($first.ContentPath) { Clear-InventoryCache -ContentPath $first.ContentPath } else { Clear-InventoryCache }
         }
         'Delete' {
             if ($selection.Count -eq 0) { break }
@@ -835,15 +860,18 @@ function Invoke-InventoryAction {
             if ($selection.Count -eq 0) { break }
             Write-Step 'Build packages'
             Build-AppPackages -InventoryRows $selection -Config $Config
+            if ($touchedAll) { Clear-InventoryCache } else { Clear-InventoryCache -ContentPath $touched }
         }
         'Publish' {
             if ($selection.Count -eq 0) { break }
             Write-Step 'Publish to ConfigMgr'
             Publish-AppPackages -InventoryRows $selection -Config $Config
+            if ($touchedAll) { Clear-InventoryCache } else { Clear-InventoryCache -ContentPath $touched -Site }
         }
         'Retire' {
             Write-Step 'Retire applications'
             retireApps
+            Clear-InventoryCache                                    # applications and folders may be gone
         }
         'OpenFolder' {
             try {
@@ -853,8 +881,8 @@ function Invoke-InventoryAction {
             }
             catch { Write-Warn $_.Exception.Message }
         }
-        'Tools'   { Write-Step 'Tools'; Show-ToolsMenu }
-        'Refresh' { }
+        'Tools'   { Write-Step 'Tools'; Show-ToolsMenu; Clear-InventoryCache -Site }
+        'Refresh' { Clear-InventoryCache }
         'Cancel'  { Write-Info 'Closed';          return $false }
         'Closed'  { Write-Info 'Closed with [X]'; return $false }
         default   { Write-Info "Unexpected: $($Choice.Action)"; return $false }
