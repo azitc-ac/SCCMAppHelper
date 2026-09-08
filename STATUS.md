@@ -61,6 +61,19 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
 
+## A stepping stone for file detection (2026-09-08)
+
+Picking `DetectionMethod = File` fills the empty pattern field with
+`%ProgramFiles%\` (`$script:FilePatternStart`), and changing the method away
+again removes it, so it cannot end up in a registry key. OK refuses a File
+pattern that is empty, is still only the stepping stone, or ends in a backslash,
+and the message says which of the three it is - a path left half written would
+have ConfigMgr looking for a file called `ProgramFiles` on every client for ever.
+
+Checked by driving the editor: the field fills on File, empties on Registry,
+fills again on File, OK with only the stepping stone is refused with the message
+and the editor stays open, and a completed path is accepted and returned.
+
 ## Reading the list, tuned (2026-09-08)
 
 The list is read again after every action, and each read walked every package

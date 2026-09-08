@@ -5,6 +5,11 @@
     winget picker, the retire dialog and the settings editor hang off it.
 #>
 
+# What a file detection path is filled in with when the method is picked - a
+# stepping stone, not an answer. The editor refuses OK while it is still all
+# that is there. See the DetectionPattern handling in Open-EditDialog.
+$script:FilePatternStart = '%ProgramFiles%\'
+
 Add-Type -AssemblyName PresentationCore      -ErrorAction SilentlyContinue | Out-Null
 Add-Type -AssemblyName PresentationFramework -ErrorAction SilentlyContinue | Out-Null
 Add-Type -AssemblyName System.Windows.Forms  -ErrorAction SilentlyContinue | Out-Null
@@ -733,6 +738,22 @@ function Open-EditDialog {
             if ($textBoxes.Contains('DetectionPattern')) {
                 $textBoxes['DetectionPattern'].ToolTip = $(if ($hint) { $hint } else { $null })
                 $textBoxes['DetectionPattern'].IsEnabled = ($method -notin 'MSI', 'Script')
+
+                # File detection needs an absolute path, and the start of it is
+                # the same almost every time - so it is filled in as a stepping
+                # stone. Only into an empty field, and it is taken back out
+                # again when the method changes, so it cannot end up in a
+                # registry key. On its own it is not an answer: OK refuses it.
+                $current = [string]$textBoxes['DetectionPattern'].Text
+                if ($method -eq 'File') {
+                    if (-not $current.Trim()) {
+                        $textBoxes['DetectionPattern'].Text = $script:FilePatternStart
+                        $textBoxes['DetectionPattern'].CaretIndex = $script:FilePatternStart.Length
+                    }
+                }
+                elseif ($current.Trim() -eq $script:FilePatternStart) {
+                    $textBoxes['DetectionPattern'].Text = ''
+                }
             }
         }
 
@@ -859,7 +880,33 @@ function Open-EditDialog {
     $okButton.Width = 100
     $okButton.Margin = '5'
     [Windows.Automation.AutomationProperties]::SetAutomationId($okButton, 'OK')
-    $okButton.Add_Click({ $window.DialogResult = $true })
+    $okButton.Add_Click({
+        # The stepping stone is not a detection rule. Left as it is, ConfigMgr
+        # would look for a file called ProgramFiles and never find it, on every
+        # client - so the dialog says what is missing instead of accepting it.
+        if ($textBoxes.Contains('DetectionMethod') -and $textBoxes.Contains('DetectionPattern') -and
+            ([string]$textBoxes['DetectionMethod'].Text).Trim() -eq 'File') {
+
+            $pattern = ([string]$textBoxes['DetectionPattern'].Text).Trim()
+            $missing =
+                if (-not $pattern)                             { 'The path is empty.' }
+                elseif ($pattern -eq $script:FilePatternStart) { 'Only the start of the path is there.' }
+                elseif ($pattern.EndsWith('\'))                { 'The path ends at a folder.' }
+                else                                           { '' }
+
+            if ($missing) {
+                $null = Show-MessageDialog -Caption 'File detection' -Buttons 'OK' -Icon 'Warning' -Owner $window -Text (
+                    "$missing`n`nFile detection needs the full path of a file the installation leaves behind, for example:`n`n" +
+                    "    $($script:FilePatternStart)Notepad++\notepad++.exe`n`n" +
+                    'ConfigMgr checks that file on the client - a folder or half a path finds nothing.')
+                $null = $textBoxes['DetectionPattern'].Focus()
+                $textBoxes['DetectionPattern'].CaretIndex = $textBoxes['DetectionPattern'].Text.Length
+                return
+            }
+        }
+
+        $window.DialogResult = $true
+    })
 
     $cancelButton = New-Object Windows.Controls.Button
     $cancelButton.Content = 'Cancel'
