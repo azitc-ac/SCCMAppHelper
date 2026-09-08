@@ -1704,6 +1704,36 @@ function New-PublishArtifact {
     Returns the clauses plus what Add-/Set-CMScriptDeploymentType needs to wire
     more than one of them together.
 #>
+<#
+    What is wrong with a file detection path, in one sentence - empty when
+    there is nothing wrong.
+
+    ConfigMgr validates the Path of a file clause itself, but only when the
+    clause is built, which is after the application has been created. What comes
+    back then is "Cannot validate argument on parameter 'Path'" and nothing else:
+    no path, no reason, and an application left behind without a deployment
+    type. A typo like %\ProgramFiles% got that far because it does have a parent
+    and a file name - it is simply not a path.
+#>
+function Get-DetectionFilePathProblem {
+    param([string]$Path)
+
+    $path = ([string]$Path).Trim()
+
+    if (-not $path)              { return 'the path is empty' }
+    if ($path.EndsWith('\'))     { return 'the path ends at a folder, not at a file' }
+    if ($path -notmatch '\\')    { return 'the path holds no folder - it has to be the full path of a file' }
+
+    if ($path -match '^%[^%\\]+%\\')  { return '' }   # %ProgramFiles%\...
+    if ($path -match '^[A-Za-z]:\\')  { return '' }   # C:\...
+    if ($path -match '^\\\\[^\\]+\\') { return '' }   # \\server\share\...
+
+    if ($path -match '%') {
+        return 'the environment variable is malformed - it has to read %ProgramFiles%\ with the name between the two percent signs'
+    }
+    return 'the path is not absolute - it has to start with a drive letter or an environment variable'
+}
+
 function New-AppDetectionClause {
     param([Parameter(Mandatory = $true)]$App)
 
@@ -1727,10 +1757,12 @@ function New-AppDetectionClause {
         }
 
         'File' {
-            if (-not $App.DetectionPattern) { throw 'DetectionMethod is File but DetectionPattern holds no file path.' }
+            $problem = Get-DetectionFilePathProblem -Path $App.DetectionPattern
+            if ($problem) {
+                throw ("DetectionPattern [{0}] cannot be used for file detection - {1}. It has to be the full path of a file the installation leaves behind, for example %ProgramFiles%\Notepad++\notepad++.exe." -f $App.DetectionPattern, $problem)
+            }
             $filePath = Split-Path -Parent $App.DetectionPattern
             $fileName = Split-Path -Leaf   $App.DetectionPattern
-            if (-not $filePath) { throw "DetectionPattern [$($App.DetectionPattern)] is not a full file path." }
 
             # Is64Bit decides how the client resolves %ProgramFiles% and
             # %SystemRoot%\System32. Without it the clause is evaluated in the 32
