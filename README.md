@@ -80,6 +80,11 @@ applications, one for the deployments, one for the distribution status. On a lar
 takes a few seconds; if the site cannot be reached the list still shows, with the site column
 at `Unknown`. **Refresh** reads both again.
 
+The window is built again after every action, and the rows that were selected are selected
+again when it comes back - under their new name if an edit renamed one, and on the new row
+after **Add...** or **New version...**. A row that no longer exists, or that the current view
+filters out, simply is not selected.
+
 **Show** narrows the list to one of the three places: on the share, in the site, both, on
 the share but not in the site (what is waiting to be published), in the site but not on the
 share, changed since publishing, definition only, or without a definition. The text filter

@@ -55,6 +55,7 @@ check-prereqs -Config $config
 # built, an application published, a site switched in the tools menu - shows
 # up as soon as the window is back.
 $continue = $true
+$select = @()
 while ($continue) {
     $config = Get-ActiveConfig
 
@@ -64,9 +65,15 @@ while ($continue) {
 
     $choice = Show-InventoryDialog -Inventory $inventory.Rows `
         -Title ("SCCMAppHelper - {0} [{1}] - https://blog.zarenko.net/" -f $config.siteName, $config.siteCode) `
-        -SourceRoot $inventory.WorkRoot -SiteRead $inventory.SiteRead
+        -SourceRoot $inventory.WorkRoot -SiteRead $inventory.SiteRead -Select $select
 
+    # What was selected stays selected across the round trip. An action that
+    # renamed or created a row says where to land instead.
+    $select = @($choice.Selection | ForEach-Object { $_.AppFullName })
     $continue = Invoke-InventoryAction -Choice $choice -Config $config
+
+    $afterAction = Get-InventorySelection
+    if ($afterAction.Count -gt 0) { $select = $afterAction }
 }
 
 Stop-Transcript | Out-Null

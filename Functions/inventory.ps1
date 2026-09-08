@@ -439,6 +439,27 @@ function Remove-AppListRow {
     An Apps.csv shaped object from whatever carries the columns - a CSV row, an
     inventory row's definition, or the ordered hashtable the editor returns.
 #>
+<#
+    Which row the main window should come back to after an action.
+
+    Normally that is whatever was selected, and the loop carries it over on its
+    own. An action that renames a row - editing name or version - or creates one
+    says so here, so the window lands on the row that came out of the action
+    rather than on the name that no longer exists.
+#>
+$script:InventorySelectAfterAction = @()
+
+function Set-InventorySelection {
+    param([string[]]$AppFullName)
+    $script:InventorySelectAfterAction = @($AppFullName | Where-Object { $_ })
+}
+
+function Get-InventorySelection {
+    $selection = @($script:InventorySelectAfterAction)
+    $script:InventorySelectAfterAction = @()
+    return $selection
+}
+
 function ConvertTo-AppRecord {
     param($Source)
 
@@ -618,6 +639,9 @@ function Add-AppFromSource {
     if (-not $app.Name -or -not $app.Version) { throw 'Name and Version are required - they name the package folder and the application.' }
 
     Set-AppListRow -App $app
+    # The new row is what the window should land on, not what was selected
+    # before it existed.
+    Set-InventorySelection -AppFullName (Get-AppFullName -Name $app.Name -Version $app.Version)
     $packageRoot = New-AppPackage -App $app -Config $Config -InstallerPath $installer
     if (-not $installer) { Open-PackageForEditing -PackageRoot $packageRoot -Config $Config }
 
@@ -700,6 +724,9 @@ function Edit-AppDefinition {
 
     $keyChanged = ($edited.Name.Trim() -ne $InventoryRow.Name) -or ($edited.Version.Trim() -ne $InventoryRow.Version)
     Set-AppListRow -App $edited -ReplaceName $InventoryRow.Name -ReplaceVersion $InventoryRow.Version
+
+    # Come back to this row - under its new name, if it got one.
+    Set-InventorySelection -AppFullName (Get-AppFullName -Name $edited.Name -Version $edited.Version)
 
     if ($InventoryRow.HasPackage -and $keyChanged) {
         $null = Show-MessageDialog -Caption 'Definition edited' -Buttons 'OK' -Icon 'Information' -Text (

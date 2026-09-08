@@ -61,6 +61,18 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
 
+## The selection survives an action (2026-09-08)
+
+`Show-InventoryDialog` takes `-Select` (application names) and restores them in
+`Add_Loaded`. The main loop carries the selection of the previous round over,
+and an action that renames or creates a row overrides it through
+`Set-InventorySelection` - Edit under the new name, Add and New version on the
+row that was just created. A name that is no longer in the list, or that the
+current view filters out, selects nothing and says nothing.
+
+Checked by driving the window: one row, two rows, a name that is gone, and
+nothing requested - each comes back as expected.
+
 ## A stepping stone for file detection (2026-09-08)
 
 Picking `DetectionMethod = File` fills the empty pattern field with
