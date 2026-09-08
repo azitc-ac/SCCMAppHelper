@@ -61,6 +61,33 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
 
+## Identifiers out of the repository (2026-09-08)
+
+The repository was public for a while and carried the site server, the domain,
+the site codes, a client name and a customer product name - in `config.json`,
+`STATUS.md`, `README.md` and one comment in `functions.ps1`. The repository is
+private again, and every commit was rewritten (`git filter-branch` over a
+replacement script, 68 commits, tag included) so the identifiers appear nowhere
+in the history either. What the tool ships now are placeholders:
+
+    CMSERVER, CMSERVER.customer.example, P01, CM_P01     the production site
+    LAB01, LAB01.lab.example, L01, CLIENT01              the lab
+
+Verified by walking every blob in the object database: no match left.
+
+Two things this does not solve, and both are worth knowing:
+
+* GitHub keeps unreachable objects after a force push. The old commit and the
+  old `config.json` were still readable by their SHA right after the rewrite.
+  Only deleting and recreating the repository - or asking GitHub support to
+  collect the garbage - removes them for certain.
+* Anyone who cloned or forked while it was public still has the old history.
+
+The real values live on the machines that run the tool, in their own
+`config.json`, which `update.ps1` never overwrites. A `git pull` or
+`git reset --hard` **does** overwrite it, because the file is tracked - back it
+up before resetting a clone onto the rewritten history.
+
 ## The selection survives an action (2026-09-08)
 
 `Show-InventoryDialog` takes `-Select` (application names) and restores them in
