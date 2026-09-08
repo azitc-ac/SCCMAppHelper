@@ -26,6 +26,24 @@ if (-not $toolVersion) { $toolVersion = '1.1' }
 
 #region --------------------------------------------------------------- output
 
+<#
+    An error message with the place it came from.
+
+    "Cannot validate argument on parameter 'Path'" says nothing about which of
+    the dozen calls in a publish run produced it. The file and line do, and they
+    cost one property of the error record.
+#>
+function Format-ErrorDetail {
+    param([Parameter(Mandatory = $true)]$ErrorRecord)
+
+    $message = [string]$ErrorRecord.Exception.Message
+    $info    = $ErrorRecord.InvocationInfo
+    if ($info -and $info.ScriptName) {
+        return ('{0} ({1}:{2})' -f $message, (Split-Path -Leaf $info.ScriptName), $info.ScriptLineNumber)
+    }
+    return $message
+}
+
 function Write-Step { param([string]$Message) Write-Host "==> $Message" -ForegroundColor Cyan }
 function Write-Ok   { param([string]$Message) Write-Host "    $Message" -ForegroundColor Green }
 function Write-Info { param([string]$Message) Write-Host "    $Message" -ForegroundColor Gray }
@@ -2240,17 +2258,24 @@ function Publish-CMApplication {
                 $application = New-CMApplication @newAppParams
                 Write-Ok "Application created: $appFullName"
 
-                $applicationFolder = Resolve-CMFolderPath -FolderPath $Config.applicationFolderPath -Config $Config -RootNode 'Application'
-                if ($applicationFolder -and (New-CMFolderPath -FolderPath $applicationFolder)) {
-                    try {
+                # Sorting the application into a console folder is cosmetic, and
+                # nothing cosmetic may abort a publish that has just created an
+                # application - it would leave it behind without a deployment
+                # type, which the list then reports as Foreign for ever.
+                try {
+                    $applicationFolder = Resolve-CMFolderPath -FolderPath $Config.applicationFolderPath -Config $Config -RootNode 'Application'
+                    if ($applicationFolder -and (New-CMFolderPath -FolderPath $applicationFolder)) {
                         $null = Move-CMObject -FolderPath $applicationFolder -InputObject $application -ErrorAction Stop
                         Write-Ok "Moved to console folder [$applicationFolder]"
                     }
-                    catch { Write-Warn ("Could not move the application to [{0}]: {1}" -f $applicationFolder, $_.Exception.Message) }
                 }
+                catch { Write-Warn ("Could not move the application into a console folder: {0}" -f (Format-ErrorDetail -ErrorRecord $_)) }
             }
 
             # ------------------------------------------------------ deployment type
+            # An application without a deployment type is not usable and the list
+            # cannot even tell it is ours - the signature lives in the deployment
+            # type comment. So from here on, a failure says that plainly.
             $deploymentTypeName = $appFullName
             $existingDt = Get-CMDeploymentType -ApplicationName $appFullName -DeploymentTypeName $deploymentTypeName -ErrorAction SilentlyContinue
 
