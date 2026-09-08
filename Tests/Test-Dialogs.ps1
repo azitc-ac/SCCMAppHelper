@@ -92,7 +92,9 @@ function Test-CatalogPrefill {
     # selection dialog; the first row is the one the tool ranks highest.
     $installer = Wait-UiaWindow -ProcessId $Tool.Id -AutomationId 'SelectDialog' -TimeoutSeconds 90
     if ($installer) {
-        $first = (Get-UiaElement -Root $installer -ControlType DataItem)[0]
+        # @(), or a picker offering exactly one installer hands back that
+        # element itself and [0] indexes into it instead of selecting it.
+        $first = @(Get-UiaElement -Root $installer -ControlType DataItem)[0]
         Test-That 'the installer picker offers installers' ($null -ne $first) $(if ($first) { $first.Current.Name })
         if ($first) {
             $first.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()

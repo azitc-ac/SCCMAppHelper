@@ -779,7 +779,11 @@ function Read-CatalogPackage {
 
     Write-Step "Catalog: $($selection.PackageId)"
 
-    $latest = (Get-CatalogPackageVersion -PackageIdentifier $selection.PackageId)[0]
+    # @() around it, because a package with exactly one version comes back as a
+    # bare string - PowerShell unrolls a single element array on the way out of
+    # a function - and [0] on a string is its first character. Process Explorer
+    # has one version, 17.13, and the tool went looking for version "1".
+    $latest = @(Get-CatalogPackageVersion -PackageIdentifier $selection.PackageId)[0]
     Write-Ok "Newest version in the repository: $latest"
 
     # Get-AppListRow wants a version; here every version of the product is
