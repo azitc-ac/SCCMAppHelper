@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-08 (first real run of 1.1, three faults fixed)
+Last updated: 2026-09-08 (first real run of 1.1, then the winget index and the dialog test - seven faults fixed in total)
 
 ## Where it stands
 
@@ -52,10 +52,8 @@ Run on 2026-09-08 against the lab and the production site: the window itself, th
 buttons, and publishing an application end to end. Three faults came out of that run and are
 fixed - see *What the first real run of 1.1 found* below.
 
-Still not checked:
-
-* `Tests\Test-Dialogs.ps1`, rewritten for the new window
-* the winget leg end to end through **Add... -> From winget**
+Both of the things left open there have since been run - see *The winget leg, the dialog test
+and three more faults* below.
 
 ## What the first real run of 1.1 found (2026-09-08)
 
@@ -88,6 +86,60 @@ its own now.
 And a lesson for the next one of these: errors now carry the file and line they
 came from (`Format-ErrorDetail`). Without that, the first of these three cost an
 hour of guessing.
+
+## The winget leg, the dialog test and three more faults (2026-09-08)
+
+The first run of the winget index and of `Test-Dialogs.ps1` under Windows. Everything the
+cloud session could only parse or fake has now been executed on CM1.
+
+**What worked on the first try.** `start-SCCMAppHelper.cmd` starts the tool, the main window
+builds, and the Site column matches what the console shows. The winget index needed no repair
+at all where it was most suspected: `winsqlite3.dll` is there, `Add-Type` compiles the P/Invoke
+helper under 5.1, `source.msix` downloads (19.2 MB), and the reader understands the real
+schema - which is **1.7**, not the 1.x the database was faked in, and it does not care.
+14752 packages. `Test-Dialogs.ps1` passed **56 of 56** the first time it was ever run,
+including the winget leg through the dialogs down to the built package.
+
+**Three faults, all of them the same mistake in three places.** PowerShell unrolls a
+single element array on the way out of a function, and every one of these only ever showed
+when a result had exactly one element:
+
+* `Invoke-WingetIndexQuery` handed a one row result back as the row itself, so `$rows[0]` was
+  the first column and `$rows[0][0]` its first character. `SELECT COUNT(*) FROM ids` arrived
+  as the character `'1'`, `[int]'1'` is 49, and the index announced **49 packages** instead of
+  14752. A leading comma does not fix it - the caller's own `@()` then wraps everything once
+  more. Each row is emitted on its own and kept from unrolling now.
+* `(Get-CatalogPackageVersion ...)[0]` took the first character of the version when a package
+  has only one. Process Explorer is at 17.13, the tool went looking for version `1` and got a
+  404 from the manifest repository. 7-Zip has 20 versions, PuTTY several - which is why no
+  earlier run ever showed it.
+* The same shape in `Test-Dialogs.ps1`, where an installer picker offering exactly one
+  installer would hand back that element instead of a list.
+
+Worth remembering: **a single element is the test case.** All three read correctly for two
+items and wrongly for one, and nothing in the output looked like an error.
+
+**And one that had nothing to do with PowerShell.** The site pass of `Get-AppInventory`
+created a row for an application it had not seen on the share only when the tool had published
+it; a foreign one was skipped. That made the documented view *In the site, not on the share*
+unable to show the rows it exists for. Two applications on the lab site - one of them a
+customer package - were in the site, in no view and in no count, and nothing said so. 24 rows
+against 22 applications in the site before, 26 after.
+
+**The winget leg, end to end, twice.** `Test-Dialogs.ps1` drove it for PuTTY from the curated
+list. Driven separately for `Microsoft.Sysinternals.ProcessExplorer` - not in the curated
+list, so only the index can find it, and with exactly one version, so it is the case that was
+broken: searched by product name, picked, downloaded, row written, package built, installer
+in `Files`. The tool reported honestly what it could not know about that package - no
+Authenticode signature, no uninstall key derivable, no silent switch in the manifest - which
+for a Sysinternals zip is exactly right.
+
+Left on the share and in `Apps.csv` from these runs: `PuTTY - 0.84.0.0` and
+`Process Explorer - 17.13`. Neither is published. Delete the row and the folder when they are
+in the way.
+
+Still not checked here: the **Collections tab** of the settings dialog, a real **PSADT 3**
+package from the older scripts, and publishing one.
 
 ## Identifiers out of the repository (2026-09-08)
 
