@@ -354,6 +354,36 @@ $script:AppListColumns = @(
     'Notes'
 )
 
+<#
+    What a column holds in a fresh record. One place, so the columns and their
+    defaults cannot drift apart.
+#>
+function Get-AppColumnDefault {
+    param([Parameter(Mandatory = $true)][string]$Column)
+
+    switch ($Column) {
+        'DetectionMethod'   { return 'Registry' }
+        'UninstallPrevious' { return 'false' }
+        default             { return '' }
+    }
+}
+
+<#
+    An empty app record carrying exactly the columns of the app list.
+
+    Every record the tool builds comes from here. Three call sites used to spell
+    the same literal out by hand, and adding UninstallPrevious to two of them
+    was enough to make publishing fail with "the property cannot be found on
+    this object" - a record built from the column list cannot fall behind it.
+#>
+function New-AppRecord {
+    $app = New-Object psobject
+    foreach ($column in $script:AppListColumns) {
+        $app | Add-Member -MemberType NoteProperty -Name $column -Value (Get-AppColumnDefault -Column $column)
+    }
+    return $app
+}
+
 function Update-AppListSchema {
     param([Parameter(Mandatory = $true)][string]$CsvPath)
 
@@ -378,10 +408,7 @@ function Update-AppListSchema {
 
     $upgraded = foreach ($row in $rows) {
         foreach ($column in $missing) {
-            $value = ''
-            if ($column -eq 'DetectionMethod')   { $value = 'Registry' }
-            if ($column -eq 'UninstallPrevious') { $value = 'false' }
-            $row | Add-Member -MemberType NoteProperty -Name $column -Value $value -Force
+            $row | Add-Member -MemberType NoteProperty -Name $column -Value (Get-AppColumnDefault -Column $column) -Force
         }
         $row
     }
@@ -1396,17 +1423,10 @@ function Resolve-PackageApp {
         $Config = (Get-ActiveConfig)
     )
 
-    $app = [pscustomobject]@{
-        Publisher        = $Metadata.publisher
-        Name             = $Metadata.name
-        Version          = $Metadata.version
-        DetectionMethod  = 'Registry'
-        DetectionPattern = ''
-        ProductCode      = ''
-        InstallCmd       = ''
-        UninstallCmd     = ''
-        Notes            = ''
-    }
+    $app = New-AppRecord
+    $app.Publisher = $Metadata.publisher
+    $app.Name      = $Metadata.name
+    $app.Version   = $Metadata.version
 
     $row = Get-AppListRow -Name $Metadata.name -Version $Metadata.version
     if ($row) {
@@ -1907,17 +1927,9 @@ function Import-AppPackage {
     $existing = Get-PackageMetadata -PackageRoot $PackageRoot -Config $Config
     $row = Get-AppListRow -Name $parsed.Name -Version $parsed.Version
 
-    $app = [pscustomobject]@{
-        Publisher        = ''
-        Name             = $parsed.Name
-        Version          = $parsed.Version
-        DetectionMethod  = 'Registry'
-        DetectionPattern = ''
-        ProductCode      = ''
-        InstallCmd       = ''
-        UninstallCmd     = ''
-        Notes            = ''
-    }
+    $app = New-AppRecord
+    $app.Name    = $parsed.Name
+    $app.Version = $parsed.Version
 
     if ($row) {
         Write-Info 'Found in the app list - using its values.'
@@ -1952,17 +1964,9 @@ function Import-AppPackage {
 
     # Ask only when something essential is missing and we are not in a bulk run.
     if ((-not $app.Publisher -or -not $app.Version) -and -not $Bulk) {
-        $answer = Open-EditDialog -title "Import package: $folderName" -PropertyOrder $script:AppListColumns -item ([ordered]@{
-            Publisher        = $app.Publisher
-            Name             = $app.Name
-            Version          = $app.Version
-            DetectionMethod  = $app.DetectionMethod
-            DetectionPattern = $app.DetectionPattern
-            ProductCode      = $app.ProductCode
-            InstallCmd       = $app.InstallCmd
-            UninstallCmd     = $app.UninstallCmd
-            Notes            = $app.Notes
-        })
+        $item = [ordered]@{}
+        foreach ($column in $script:AppListColumns) { $item[$column] = $app.$column }
+        $answer = Open-EditDialog -title "Import package: $folderName" -PropertyOrder $script:AppListColumns -item $item
         $answer = $answer | Where-Object { $_ -isnot [int] }
         if (-not $answer) { throw 'Import cancelled.' }
         foreach ($key in $answer.Keys) { $app.$key = $answer[$key] }
