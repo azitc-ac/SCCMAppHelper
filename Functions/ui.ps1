@@ -431,7 +431,12 @@ function Set-IfPresent {
 
     if ([string]::IsNullOrWhiteSpace($Value)) { return }
     foreach ($key in $CandidateKeys) {
-        if ($TextBoxes.Contains($key)) { $TextBoxes[$key].Text = $Value; break }
+        # Not every field is a text field any more - a checkbox has no .Text and
+        # is never prefilled from a setup file.
+        if ($TextBoxes.Contains($key) -and $TextBoxes[$key] -isnot [Windows.Controls.CheckBox]) {
+            $TextBoxes[$key].Text = $Value
+            break
+        }
     }
 }
 
@@ -551,15 +556,52 @@ function Open-EditDialog {
 
         $value = $item[$key]
         $isMultiline = (($value -is [string]) -and ($value -match "`n")) -or ($key -match 'Cmd$')
+        $isFlag = ($key -eq 'UninstallPrevious')
 
         $label = New-Object Windows.Controls.Label
-        $label.Content = $key
+        # A checkbox carries its own wording, so the column name beside it would
+        # only say the same thing twice.
+        $label.Content = $(if ($isFlag) { '' } else { $key })
         $label.Margin = '0,0,8,6'
         $label.HorizontalAlignment = 'Left'
         $label.VerticalAlignment = $(if ($isMultiline) { 'Top' } else { 'Center' })
         [Windows.Controls.Grid]::SetRow($label, $rowIndex)
         [Windows.Controls.Grid]::SetColumn($label, 0)
         $null = $fieldGrid.Children.Add($label)
+
+        if ($isFlag) {
+            $textBox = New-Object Windows.Controls.CheckBox
+            $textBox.Content = 'Explicitly uninstall all previous versions before installation'
+            $textBox.IsChecked = (Test-AppFlag -Value ([string]$value))
+            $textBox.VerticalAlignment = 'Center'
+            $textBox.Margin = '0,4,0,2'
+            [Windows.Automation.AutomationProperties]::SetAutomationId($textBox, $key)
+            [Windows.Automation.AutomationProperties]::SetName($textBox, $key)
+            [Windows.Controls.Grid]::SetRow($textBox, $rowIndex)
+            [Windows.Controls.Grid]::SetColumn($textBox, 1)
+            $null = $fieldGrid.Children.Add($textBox)
+
+            $textBoxes[$key] = $textBox
+            $rowIndex++
+
+            # What the generated block will search for, spelled out before it is
+            # written - the search name is derived from the application name and
+            # an uninstall on a client is nothing to guess at.
+            $rowDefinition = New-Object Windows.Controls.RowDefinition
+            $rowDefinition.Height = [Windows.GridLength]::Auto
+            $null = $fieldGrid.RowDefinitions.Add($rowDefinition)
+
+            $script:UninstallPreviousHint = New-Object Windows.Controls.TextBlock
+            $script:UninstallPreviousHint.Foreground = [System.Windows.Media.Brushes]::DimGray
+            $script:UninstallPreviousHint.TextWrapping = 'Wrap'
+            $script:UninstallPreviousHint.Margin = '2,0,0,8'
+            [Windows.Automation.AutomationProperties]::SetAutomationId($script:UninstallPreviousHint, 'UninstallPreviousHint')
+            [Windows.Controls.Grid]::SetRow($script:UninstallPreviousHint, $rowIndex)
+            [Windows.Controls.Grid]::SetColumn($script:UninstallPreviousHint, 1)
+            $null = $fieldGrid.Children.Add($script:UninstallPreviousHint)
+            $rowIndex++
+            continue
+        }
 
         # DetectionMethod has four possible values and no others, so it is a list
         # rather than a free text field. Editable all the same, so an unexpected
@@ -612,6 +654,39 @@ function Open-EditDialog {
 
     $null = $stackPanel.Children.Add($fieldGrid)
 
+    # The hint under the checkbox follows name and version, because both decide
+    # what the generated block will look for.
+    if ($textBoxes.Contains('UninstallPrevious')) {
+        $syncUninstallHint = {
+            $name    = ''
+            $version = ''
+            if ($textBoxes.Contains('Name'))    { $name    = [string]$textBoxes['Name'].Text }
+            if ($textBoxes.Contains('Version')) { $version = [string]$textBoxes['Version'].Text }
+
+            $text = ''
+            if ($textBoxes['UninstallPrevious'].IsChecked) {
+                $parsed = $null
+                if (-not $name.Trim() -or -not $version.Trim()) {
+                    $text = 'Name and version decide what gets uninstalled - fill both in.'
+                }
+                elseif (-not [System.Version]::TryParse($version.Trim(), [ref]$parsed)) {
+                    $text = "Version [$version] cannot be compared with others, so nothing is uninstalled - the block is skipped when the package is built."
+                }
+                else {
+                    $text = "Searches the uninstall registry for '*{0}*' and removes every version below {1} before installing." -f
+                            (Get-ProductSearchName -Name $name), $version.Trim()
+                }
+            }
+            if ($script:UninstallPreviousHint) { $script:UninstallPreviousHint.Text = $text }
+        }
+
+        $textBoxes['UninstallPrevious'].Add_Checked($syncUninstallHint)
+        $textBoxes['UninstallPrevious'].Add_Unchecked($syncUninstallHint)
+        if ($textBoxes.Contains('Name'))    { $textBoxes['Name'].Add_TextChanged($syncUninstallHint) }
+        if ($textBoxes.Contains('Version')) { $textBoxes['Version'].Add_TextChanged($syncUninstallHint) }
+        & $syncUninstallHint
+    }
+
     # The command fields follow the detection method. MSI means the package is a
     # zero-config PSADT package, so the commands have to stay empty - the fields
     # are greyed out and say so rather than silently accepting something that
@@ -621,21 +696,25 @@ function Open-EditDialog {
         # builds out of it. The second half matters as much as the first - the
         # rule that reaches ConfigMgr is assembled from this field, the Version
         # column and nothing else, and none of that is visible here otherwise.
+        # Two lines each, and in this order: what to type here, then what
+        # ConfigMgr will check on the client. Anything the tool does in between -
+        # splitting a path, picking a registry view - is its own business and
+        # does not belong in a field hint.
         $hints = @{
-            'Registry' = 'Put in the uninstall key: a bare name is taken below SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall, a value starting with SOFTWARE\ is used as it is, and empty falls back to the ProductCode of the single MSI in .\Files. Examples: 7-Zip, or {23170F69-40C1-2702-2602-000001000000}.' + [Environment]::NewLine +
-                         'Becomes: DisplayVersion greater or equal to the Version column, checked in the 64 bit and the 32 bit registry view and joined with Or.'
-            'MSI'      = 'Nothing to put in - the ProductCode comes from the column beside this one, or is read from the single MSI in .\Files.' + [Environment]::NewLine +
-                         'Becomes: Windows Installer ProductVersion greater or equal to the Version column.'
-            'File'     = 'Put in the full path of the installed file, environment variables included. Example: %ProgramFiles%\Notepad++\notepad++.exe' + [Environment]::NewLine +
-                         'Becomes: path and file name split for you, file version greater or equal to the Version column. A path holding a variable is checked in both the 64 bit and the 32 bit view; a literal path only in the 64 bit one.'
-            'Script'   = 'Nothing to put in - the script is read from Content\SupportFiles\detection.ps1 inside the package.' + [Environment]::NewLine +
-                         'Becomes: that script, unchanged, as the deployment type detection, with the tool signature prepended.'
+            'Registry' = 'Type the uninstall key of the product, for example 7-Zip or {23170F69-40C1-2702-2602-000001000000}. A plain name is looked up under SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall; a value starting with SOFTWARE\ is used as the full path. Leave it empty to use the ProductCode of the MSI in .\Files.' + [Environment]::NewLine +
+                         'ConfigMgr then reads DisplayVersion from that key - in the 64 bit and in the 32 bit registry - and counts the application as installed from the version above upwards.'
+            'MSI'      = 'Nothing to type here. The ProductCode comes from the ProductCode field, or is read from the MSI in .\Files.' + [Environment]::NewLine +
+                         'ConfigMgr then asks Windows Installer for that product and counts the application as installed from the version above upwards.'
+            'File'     = 'Type the full path of a file the installation leaves behind. Environment variables are allowed, for example %ProgramFiles%\Notepad++\notepad++.exe.' + [Environment]::NewLine +
+                         'ConfigMgr then reads the file version and counts the application as installed from the version above upwards.'
+            'Script'   = 'Nothing to type here. The script comes from Content\SupportFiles\detection.ps1 in the package, and it travels with the content.' + [Environment]::NewLine +
+                         'ConfigMgr then runs that script on the client and counts the application as installed when the script writes something out.'
         }
 
-        # Everything above compares against the Version column, so what happens
-        # when it is not a version has to be said once.
+        # All three version rules compare against the Version field, so what
+        # happens when there is nothing to compare has to be said once.
         $existenceNote = [Environment]::NewLine +
-                         'If the Version column is not a comparable version - "19c" and the like - the rule becomes a plain existence check instead.'
+                         'If the version above is not a version ConfigMgr can compare - "19c" for example - it only checks that the product is there at all.'
 
         $syncMethod = {
             $method = $textBoxes['DetectionMethod'].Text
@@ -806,7 +885,12 @@ function Open-EditDialog {
 
     if ($window.ShowDialog() -eq $true) {
         $newItem = [ordered]@{}
-        foreach ($key in $keys) { $newItem[$key] = $textBoxes[$key].Text }
+        foreach ($key in $keys) {
+            $control = $textBoxes[$key]
+            # A CSV carries strings, so a tick becomes "true".
+            if ($control -is [Windows.Controls.CheckBox]) { $newItem[$key] = $(if ($control.IsChecked) { 'true' } else { 'false' }) }
+            else { $newItem[$key] = $control.Text }
+        }
         return $newItem
     }
 }
