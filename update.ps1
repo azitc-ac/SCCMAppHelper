@@ -51,6 +51,9 @@ if (-not $root) { $root = (Get-Location).Path }
 
 # Kept as they are on this machine. Matched against the path inside the
 # repository, so a file of the same name somewhere else is still updated.
+# config.json is not in the repository at all any more - the tool creates it
+# from config.sample.json on first start - but it stays listed here so an
+# installation that still has a tracked one from an older version keeps it.
 $keep = @(
     'Config\config.json'
     'Apps.csv'
