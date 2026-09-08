@@ -428,15 +428,16 @@ function ConvertTo-AppRecord {
     param($Source)
 
     $app = [pscustomobject]@{
-        Publisher        = ''
-        Name             = ''
-        Version          = ''
-        DetectionMethod  = 'Registry'
-        DetectionPattern = ''
-        ProductCode      = ''
-        InstallCmd       = ''
-        UninstallCmd     = ''
-        Notes            = ''
+        Publisher         = ''
+        Name              = ''
+        Version           = ''
+        DetectionMethod   = 'Registry'
+        DetectionPattern  = ''
+        ProductCode       = ''
+        InstallCmd        = ''
+        UninstallCmd      = ''
+        UninstallPrevious = 'false'
+        Notes             = ''
     }
     if ($null -eq $Source) { return $app }
 

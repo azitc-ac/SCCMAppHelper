@@ -350,6 +350,7 @@ $script:AppListColumns = @(
     'ProductCode'        # MSI detection
     'InstallCmd'         # optional PSADT code for the install section
     'UninstallCmd'       # optional PSADT code for the uninstall section
+    'UninstallPrevious'  # true: remove older versions in the pre-install section
     'Notes'
 )
 
@@ -378,7 +379,8 @@ function Update-AppListSchema {
     $upgraded = foreach ($row in $rows) {
         foreach ($column in $missing) {
             $value = ''
-            if ($column -eq 'DetectionMethod') { $value = 'Registry' }
+            if ($column -eq 'DetectionMethod')   { $value = 'Registry' }
+            if ($column -eq 'UninstallPrevious') { $value = 'false' }
             $row | Add-Member -MemberType NoteProperty -Name $column -Value $value -Force
         }
         $row
@@ -783,6 +785,20 @@ function Repair-CommandLine {
 }
 
 <#
+    The marker comment a section is written after. Both toolkit generations
+    draw the same three, so one table serves PSADT 3 and 4.
+#>
+function Get-PackageSectionMarker {
+    param([Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall')][string]$Section)
+
+    switch ($Section) {
+        'Install'    { return '## <Perform Installation tasks here>' }
+        'Uninstall'  { return '## <Perform Uninstallation tasks here>' }
+        'PreInstall' { return '## <Perform Pre-Installation tasks here>' }
+    }
+}
+
+<#
     The lines of the install or uninstall section as they stand in the script -
     whoever wrote them - without this tool's block markers. This is how a
     package built elsewhere gets its commands into the definition: read them
@@ -794,11 +810,11 @@ function Repair-CommandLine {
 function Read-PackageCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall')][string]$Section
+        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall')][string]$Section
     )
 
     if (-not (Test-Path -LiteralPath $FilePath)) { return @() }
-    $marker = $(if ($Section -eq 'Install') { '## <Perform Installation tasks here>' } else { '## <Perform Uninstallation tasks here>' })
+    $marker = Get-PackageSectionMarker -Section $Section
 
     $lines = @(Get-Content -LiteralPath $FilePath)
     $found = @()
@@ -820,20 +836,21 @@ function Read-PackageCommand {
 function Set-PackageCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall')][string]$Section,
+        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall')][string]$Section,
         [string]$Command,
         # Importing a package built elsewhere: the lines somebody wrote by hand
         # were read into the row first, so they are replaced by the block that
         # holds the same lines - once, and only when they are the same.
-        [switch]$TakeOver
+        [switch]$TakeOver,
+        # Generated code keeps its own indentation and blank lines instead of
+        # being flattened line by line - a foreach block has to stay readable
+        # for whoever opens the package afterwards.
+        [switch]$Verbatim
     )
 
     if (-not (Test-Path -LiteralPath $FilePath)) { return 'no script' }
 
-    $marker = switch ($Section) {
-        'Install'   { '## <Perform Installation tasks here>' }
-        'Uninstall' { '## <Perform Uninstallation tasks here>' }
-    }
+    $marker = Get-PackageSectionMarker -Section $Section
     $begin = "        # --- SCCMAppHelper $Section begin - rewritten from Apps.csv on every build ---"
     $end   = "        # --- SCCMAppHelper $Section end ---"
 
@@ -859,7 +876,13 @@ function Set-PackageCommand {
     }
 
     $body = @()
-    if ($Command) {
+    if ($Command -and $Verbatim) {
+        $body = @($begin) +
+                @($Command -split "`r?`n" |
+                    ForEach-Object { if ($_.Trim()) { '        ' + $_.TrimEnd() } else { '' } }) +
+                @($end)
+    }
+    elseif ($Command) {
         $body = @($begin) +
                 @($Command -split "`r?`n" | Where-Object { $_.Trim() } |
                     ForEach-Object { '        ' + (Repair-CommandLine -Line $_.Trim()) }) +
@@ -890,15 +913,20 @@ function Set-PackageCommand {
     if (-not $Command)   { return 'nothing to write' }
 
     # --- no block yet: only write when nobody put a command there by hand ---
+    # The guard protects an install command somebody wrote by hand, and it looks
+    # at the whole file. The pre-install block is generated rather than taken
+    # from a row, so a hand written install command elsewhere must not stop it.
     $handWritten = @()
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        $inOurs = $false
-        foreach ($range in $ours) { if ($i -ge $range[0] -and $i -le $range[1]) { $inOurs = $true; break } }
-        if ($inOurs) { continue }
-        # The two Start-ADTMsiProcess lines of the stock template are not a
-        # command somebody wrote - they are the zero-config MSI path.
-        if ($lines[$i] -match '^\s*(Start-ADTProcess|Start-ADTMsiProcess|Execute-Process|Execute-MSI)\b' -and
-            $lines[$i] -notmatch 'ExecuteDefaultMSISplat|DefaultMspFiles') { $handWritten += $lines[$i].Trim() }
+    if ($Section -ne 'PreInstall') {
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $inOurs = $false
+            foreach ($range in $ours) { if ($i -ge $range[0] -and $i -le $range[1]) { $inOurs = $true; break } }
+            if ($inOurs) { continue }
+            # The two Start-ADTMsiProcess lines of the stock template are not a
+            # command somebody wrote - they are the zero-config MSI path.
+            if ($lines[$i] -match '^\s*(Start-ADTProcess|Start-ADTMsiProcess|Execute-Process|Execute-MSI)\b' -and
+                $lines[$i] -notmatch 'ExecuteDefaultMSISplat|DefaultMspFiles') { $handWritten += $lines[$i].Trim() }
+        }
     }
     if ($handWritten.Count -gt 0) {
         if (-not $TakeOver) { return 'hand written' }
@@ -929,6 +957,101 @@ function Set-PackageCommand {
     if ($markerAt -lt $lines.Count - 1) { $new += $lines[($markerAt + 1)..($lines.Count - 1)] }
     Set-Content -LiteralPath $FilePath -Value $new -Encoding UTF8
     return 'inserted'
+}
+
+<#
+    A yes/no column of the app list, in the shapes a CSV round trip produces.
+#>
+function Test-AppFlag {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return ($Value.Trim() -match '^(?i:true|1|yes|ja|x|on)$')
+}
+
+<#
+    The product name to search the uninstall registry with, derived from the
+    application name: an architecture suffix in brackets and a trailing version
+    are part of our naming convention, not of the DisplayName a client carries.
+
+        7-Zip 26.02 (x64 edition)  ->  7-Zip
+        Notepad++ (x64)            ->  Notepad++
+
+    The result is matched with a wildcard on both sides, so it has to be the
+    part that stays the same across versions - and no shorter than that, or the
+    uninstall reaches products nobody meant.
+#>
+function Get-ProductSearchName {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $trimmed = ($Name -replace '\s*\([^)]*\)\s*$', '')
+    $trimmed = ($trimmed -replace '\s+v?\d+[\d.]*$', '').Trim()
+    if ($trimmed) { return $trimmed }
+    return $Name.Trim()
+}
+
+<#
+    The pre-installation block that removes every older version of the product
+    before the new one is installed - what the "Explicitly uninstall all
+    previous versions before installation" checkbox switches on.
+
+    Both halves of the work use the same filter: the registry lookup only exists
+    so the log says what was found, Uninstall-ADTApplication does the removing.
+    The filter compares parsed versions, so it never touches an installation
+    that is the same version or newer.
+
+    Returns an empty string when the column is off - which is what removes an
+    existing block from the script again.
+#>
+function Get-UninstallPreviousCommand {
+    param([Parameter(Mandatory = $true)]$App)
+
+    if (-not (Test-AppFlag -Value $App.UninstallPrevious)) { return '' }
+
+    # Without a comparable version there is no "previous", and guessing one
+    # would uninstall by name alone - on a client, unasked.
+    $parsed = $null
+    if (-not [System.Version]::TryParse($App.Version, [ref]$parsed)) {
+        Write-Warn ("Version [{0}] cannot be compared, so 'uninstall previous versions' is skipped - it would have to remove by name alone." -f $App.Version)
+        return ''
+    }
+
+    $searchName = Get-ProductSearchName -Name $App.Name
+
+    $template = @'
+## Remove every older version of the product before installing this one.
+$targetVersion = [version]'<VERSION>'
+$versionFilter = {
+    $v = $_.DisplayVersion
+    $parsed = $null
+    $v -and [version]::TryParse($v, [ref]$parsed) -and $parsed -lt $targetVersion
+}
+
+$components = @(
+    @{ Name = '<NAME>'; Type = 'All' }
+)
+
+foreach ($component in $components) {
+    $found = Get-ItemProperty `
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' `
+        -ErrorAction Ignore |
+        Where-Object { $_.DisplayName -like "*$($component.Name)*" } |
+        Where-Object $versionFilter
+
+    if ($found) {
+        $found | ForEach-Object {
+            Write-ADTLogEntry -Message "Found previous component '$($_.DisplayName)' $($_.DisplayVersion) - uninstalling."
+        }
+        Uninstall-ADTApplication -Name $component.Name -ApplicationType $component.Type -FilterScript $versionFilter
+        Write-ADTLogEntry -Message "Uninstall of '$($component.Name)' complete."
+    } else {
+        Write-ADTLogEntry -Message "Component '$($component.Name)' not found or already current - skipping."
+    }
+}
+'@
+
+    return $template.Replace('<VERSION>', $App.Version.Trim()).Replace('<NAME>', $searchName.Replace("'", "''"))
 }
 
 function New-DetectionScript {
@@ -1181,6 +1304,24 @@ function New-AppPackage {
             'unchanged'    { Write-Info "$section command already matches the app list." }
             'hand written' { Write-Warn "The package already holds a command that this tool did not write - leaving it alone. The app list says: $command" }
             'no marker'    { Write-Info "No $section marker in the PSADT script - nothing written." }
+        }
+    }
+
+    # The generated pre-install block. Switched off, the empty command removes
+    # the block that is there - so unticking the box undoes it on the next build.
+    $preInstall = Get-UninstallPreviousCommand -App $App
+    $preResult  = Set-PackageCommand -FilePath $adtScript -Section 'PreInstall' -Command $preInstall -Verbatim
+
+    if (-not $preInstall) {
+        if ($preResult -eq 'replaced') { Write-Ok 'Uninstall of previous versions removed from the package.' }
+    }
+    else {
+        $searched = "searches the uninstall registry for '*{0}*' and removes every version below {1}" -f (Get-ProductSearchName -Name $App.Name), $App.Version.Trim()
+        switch ($preResult) {
+            'replaced'  { Write-Ok   "Uninstall of previous versions updated - $searched." }
+            'inserted'  { Write-Ok   "Uninstall of previous versions written into the pre-install section - $searched." }
+            'unchanged' { Write-Info 'Uninstall of previous versions already in the package.' }
+            'no marker' { Write-Warn 'No pre-install marker in the PSADT script - the uninstall of previous versions was not written.' }
         }
     }
 

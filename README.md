@@ -137,6 +137,7 @@ deployment type name and the base for every collection name.
 | `ProductCode` | MSI ProductCode for `DetectionMethod = MSI` |
 | `InstallCmd` | Optional PSADT code for the install section |
 | `UninstallCmd` | Optional PSADT code for the uninstall section |
+| `UninstallPrevious` | `true`: remove every older version before installing - see below |
 | `Notes` | Free text, used as the application description |
 
 Only `Publisher`, `Name` and `Version` are required - an older three column `apps.csv` is
@@ -174,6 +175,43 @@ A GUID in braces is a script block to PowerShell, not a string, so
 `-ProductCode {102DCD41-...}` fails on the client with a message about script blocks and no
 input that says nothing about the missing quotes. The quotes are put back before the line is
 written; quotes that are already there are left alone.
+
+### Uninstalling previous versions
+
+The checkbox **Explicitly uninstall all previous versions before installation**
+(`UninstallPrevious`) writes a block into the *pre-installation* section that removes every
+older version of the product before the new one goes on. It is for installers that leave the
+old version behind instead of upgrading it - the second Notepad++ on a client, under its own
+uninstall key, is what this is for.
+
+The block is generated from the row, not stored in it:
+
+```powershell
+## <Perform Pre-Installation tasks here>
+        # --- SCCMAppHelper PreInstall begin - rewritten from Apps.csv on every build ---
+        $targetVersion = [version]'8.9.8'
+        $versionFilter = { ... $parsed -lt $targetVersion }
+
+        $components = @(
+            @{ Name = 'Notepad++'; Type = 'All' }
+        )
+        ... Uninstall-ADTApplication -Name $component.Name -FilterScript $versionFilter ...
+        # --- SCCMAppHelper PreInstall end ---
+```
+
+Two things decide what it removes, and both come from the row:
+
+* **the version** is the target - only installations that parse as a version *and* are lower
+  are touched, so the same version and anything newer stay. A version that cannot be parsed
+  as one (`19c`) means there is no "previous", and the block is skipped with a warning rather
+  than falling back to uninstalling by name.
+* **the name** is searched for with a wildcard on both sides, derived from `Name` by dropping
+  a bracketed suffix and a trailing version: `Notepad++ (x64)` searches for `*Notepad++*`,
+  `7-Zip 26.02 (x64 edition)` for `*7-Zip*`. The editor spells the result out under the
+  checkbox before anything is saved - worth a look for a product whose name is a prefix of
+  other products.
+
+Unticking the box removes the block again on the next build.
 
 `DetectionMethod` is a list rather than a free text field, and what `DetectionPattern` has to
 contain depends on it - so the hint under the field follows the method, and the field is

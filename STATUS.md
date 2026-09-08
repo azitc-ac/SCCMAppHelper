@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-01 (the main window replaces the start menu)
+Last updated: 2026-09-08 (uninstall previous versions)
 
 ## Where it stands
 
@@ -60,6 +60,33 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
   degrade to an empty count and an empty content column
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
+
+## Uninstall previous versions (2026-09-08, not yet run on a client)
+
+New column `UninstallPrevious` and a checkbox in the record editor, **Explicitly uninstall all
+previous versions before installation**. `Get-UninstallPreviousCommand` builds the PSADT block
+from the row and `Set-PackageCommand -Section PreInstall -Verbatim` writes it after
+`## <Perform Pre-Installation tasks here>` - the same marked block the install and uninstall
+commands use, so it is rewritten on every build and unticking the box removes it again.
+
+`-Verbatim` is new: the existing sections trim every line, which would flatten a `foreach`
+block into one indent level. The pre-install block keeps its own indentation and blank lines.
+The hand written guard is skipped for this section - it scans the whole file for install
+commands, and a package with a hand written one would otherwise never receive the block.
+
+The search name is derived from `Name` by `Get-ProductSearchName` (drop a bracketed suffix and
+a trailing version), and the editor spells out under the checkbox what will be searched for
+and below which version, because this uninstalls software on a client. A version that does not
+parse means there is no "previous": the block is skipped with a warning instead of removing by
+name alone.
+
+Checked locally: flag parsing, name derivation, the generated block parses as PowerShell, it
+goes into a PSADT 4 script and the script still parses, a second build reports `unchanged`, an
+empty command removes the block and leaves the marker, a hand written install command in the
+same file is untouched, the schema upgrade fills the column with `false`, and the editor builds
+the checkbox and the hint (checkbox state and derived name verified through the visual tree).
+**Not checked**: an actual client run - whether `Uninstall-ADTApplication` removes what the
+filter selects on a real installation.
 
 ## Path length in the list (2026-09-01)
 
