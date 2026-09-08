@@ -794,7 +794,7 @@ function Build-AppPackages {
             }
         }
         catch {
-            Write-Fail ("[{0}] {1}" -f $row.AppFullName, $_.Exception.Message)
+            Write-Fail ("[{0}] {1}" -f $row.AppFullName, (Format-ErrorDetail -ErrorRecord $_))
             if ($rows.Count -eq 1) { pause }
         }
     }
@@ -831,7 +831,7 @@ function Publish-AppPackages {
             Publish-CMApplication -PackageRoot $packageRoot -Bulk:$bulk -Config $Config
         }
         catch {
-            Write-Fail ("[{0}] {1}" -f $row.AppFullName, $_.Exception.Message)
+            Write-Fail ("[{0}] {1}" -f $row.AppFullName, (Format-ErrorDetail -ErrorRecord $_))
             if (-not $bulk) { pause }
         }
     }
@@ -861,21 +861,21 @@ function Invoke-InventoryAction {
         'Add' {
             Write-Step ("Add application from {0}" -f $Choice.Source.ToLower())
             try { $null = Add-AppFromSource -Source $Choice.Source -Config $Config }
-            catch { Write-Fail $_.Exception.Message; pause }
+            catch { Write-Fail (Format-ErrorDetail -ErrorRecord $_); pause }
             Clear-InventoryCache                                    # a folder appeared
         }
         'NewVersion' {
             if (-not $first) { break }
             Write-Step ("New version of {0}" -f $first.Name)
             try { $null = Add-AppFromSource -Source $Choice.Source -Template (ConvertTo-AppRecord -Source $(if ($first.Row) { $first.Row } else { $first })) -Config $Config }
-            catch { Write-Fail $_.Exception.Message; pause }
+            catch { Write-Fail (Format-ErrorDetail -ErrorRecord $_); pause }
             Clear-InventoryCache                                    # a folder appeared
         }
         'Edit' {
             if (-not $first) { break }
             Write-Step ("Edit {0}" -f $first.AppFullName)
             try { $null = Edit-AppDefinition -InventoryRow $first -Config $Config }
-            catch { Write-Fail $_.Exception.Message; pause }
+            catch { Write-Fail (Format-ErrorDetail -ErrorRecord $_); pause }
             if ($first.ContentPath) { Clear-InventoryCache -ContentPath $first.ContentPath } else { Clear-InventoryCache }
         }
         'Delete' {
