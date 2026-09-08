@@ -27,6 +27,29 @@ Double-click `start-SCCMAppHelper.cmd`, or from a prompt:
 Windows PowerShell 5.1 with the ConfigMgr console installed. The batch file starts it with
 `-STA` and `-ExecutionPolicy Bypass` and keeps the window open if the tool ends with an error.
 
+### Installing and updating on a server without git
+
+`update.ps1` is `git pull` for a machine that has neither git nor a way to copy
+files onto it - a server reachable over RDP and nothing else. It downloads the current
+`main` from GitHub, unpacks it over the folder it sits in, and leaves this installation's own
+files alone: `Config\config.json`, `Apps.csv`, `Logs\` and `Config\winget-index\`. Nothing is
+deleted, and the commit it came from is written to `DEPLOYED-VERSION.txt`.
+
+Installing, in one line in the RDP session:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force; [Net.ServicePointManager]::SecurityProtocol='Tls12'; mkdir C:\Tools\SCCMAppHelper -Force; cd C:\Tools\SCCMAppHelper; irm https://raw.githubusercontent.com/azitc-ac/SCCMAppHelper/main/update.ps1 -OutFile update.ps1; .\update.ps1
+```
+
+From then on, updating is:
+
+```powershell
+.\update.ps1
+```
+
+`-WhatIf` lists what would be replaced without touching anything, `-Branch` pulls another
+branch, and `-Token` is there in case the repository is ever made private again.
+
 ### First run on a new server
 
 Nothing has to be filled into `config.json` by hand. If no site is configured - or the
