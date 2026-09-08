@@ -427,18 +427,7 @@ function Remove-AppListRow {
 function ConvertTo-AppRecord {
     param($Source)
 
-    $app = [pscustomobject]@{
-        Publisher         = ''
-        Name              = ''
-        Version           = ''
-        DetectionMethod   = 'Registry'
-        DetectionPattern  = ''
-        ProductCode       = ''
-        InstallCmd        = ''
-        UninstallCmd      = ''
-        UninstallPrevious = 'false'
-        Notes             = ''
-    }
+    $app = New-AppRecord
     if ($null -eq $Source) { return $app }
 
     foreach ($column in $script:AppListColumns) {

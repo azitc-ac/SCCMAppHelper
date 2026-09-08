@@ -80,6 +80,14 @@ and below which version, because this uninstalls software on a client. A version
 parse means there is no "previous": the block is skipped with a warning instead of removing by
 name alone.
 
+**Fixed the same day, found by publishing 7-Zip on LAB01**: `Publish to ConfigMgr` failed with
+"the property 'UninstallPrevious' cannot be found on this object". Three call sites built an
+app record as a hand written literal, and adding a column to two of them was enough to break
+the third. All records now come from `New-AppRecord`, which builds them from
+`$script:AppListColumns`, with the per-column defaults in `Get-AppColumnDefault` - the schema
+upgrade uses the same two functions. A column added to the list can no longer be missing from
+a record.
+
 Checked locally: flag parsing, name derivation, the generated block parses as PowerShell, it
 goes into a PSADT 4 script and the script still parses, a second build reports `unchanged`, an
 empty command removes the block and leaves the marker, a hand written install command in the
