@@ -910,10 +910,13 @@ function Open-EditDialog {
 
             $pattern = ([string]$textBoxes['DetectionPattern'].Text).Trim()
             $missing =
-                if (-not $pattern)                             { 'The path is empty.' }
-                elseif ($pattern -eq $script:FilePatternStart) { 'Only the start of the path is there.' }
-                elseif ($pattern.EndsWith('\'))                { 'The path ends at a folder.' }
-                else                                           { '' }
+                if ($pattern -eq $script:FilePatternStart) { 'Only the start of the path is there.' }
+                else {
+                    # The same rule the detection clause applies later, so a path
+                    # the site would refuse never gets that far.
+                    $problem = Get-DetectionFilePathProblem -Path $pattern
+                    if ($problem) { 'This is not a full file path - ' + $problem + '.' } else { '' }
+                }
 
             if ($missing) {
                 $null = Show-MessageDialog -Caption 'File detection' -Buttons 'OK' -Icon 'Warning' -Owner $window -Text (
