@@ -3,3 +3,4 @@ Logs/
 Config/winget-index/
 DEPLOYED-VERSION.txt
 token.dat
+Config/config.json

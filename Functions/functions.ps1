@@ -55,6 +55,18 @@ function Get-ToolSignaturePattern { return 'SCCMAppHelper \d+(\.\d+)*' }
 function Get-AppHelperConfig {
     param([string]$Path = (Join-Path $rootDir 'Config\config.json'))
 
+    # config.json belongs to the machine, not to the repository - it holds the
+    # sites of this environment and is not versioned, so no update, pull or
+    # reset can overwrite it. What ships is config.sample.json, and the first
+    # start copies it. The setup assistant then fills in the real site.
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $sample = Join-Path (Split-Path -Parent $Path) 'config.sample.json'
+        if (Test-Path -LiteralPath $sample) {
+            Copy-Item -LiteralPath $sample -Destination $Path -Force
+            Write-Info "No configuration yet - started from $(Split-Path -Leaf $sample)."
+        }
+    }
+
     if (-not (Test-Path -LiteralPath $Path)) { throw "Configuration file not found: $Path" }
     return (Get-Content -Raw -LiteralPath $Path -Encoding UTF8 | ConvertFrom-Json)
 }
