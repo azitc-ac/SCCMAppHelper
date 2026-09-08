@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-08 (uninstall previous versions)
+Last updated: 2026-09-08 (first real run of 1.1, three faults fixed)
 
 ## Where it stands
 
@@ -22,7 +22,7 @@ The tool was written from scratch on 2026-08-27/28 as the ConfigMgr counterpart 
 (`create-AppsInCM.ps1`, `add-NewMSIToAppsCSV.ps1`, `create-CollForOutdatedApps.ps1`,
 `add-ServerRoleToAppCollections.ps1`, `update-ins.req.dev.cols.ps1`).
 
-## The main window (2026-09-01, not yet run against a site)
+## The main window (2026-09-01, run against both sites on 2026-09-08)
 
 The start menu with its four verbs is gone. The tool opens on one list, `Get-AppInventory` in
 `Functions\inventory.ps1`, which joins the three things that exist per application:
@@ -48,18 +48,46 @@ in `_DL` only until the record is confirmed. `createApps`, `deployApps`,
 `New-AppPackage`, `Import-AppPackage`, the tools and the retire dialog are unchanged and are
 called from the new window.
 
-What was checked: every script parses, and the data layer - inventory join, `Set-`/
-`Remove-AppListRow`, `ConvertTo-AppRecord`, the staged move of an installer - was run against
-a fake share. **Not yet checked**, because it needs Windows and a site:
+Run on 2026-09-08 against the lab and the production site: the window itself, the join, the
+buttons, and publishing an application end to end. Three faults came out of that run and are
+fixed - see *What the first real run of 1.1 found* below.
 
-* the WPF main window itself (`Show-InventoryDialog`) - the coloured state cells use a
-  `DataTrigger` style and the row tooltip a `Setter` with a binding, both wrapped in
-  `try/catch` so a refusal costs the colour, not the window
-* `Get-CMApplicationState` - one `Get-CMApplication`, one `Get-CMApplicationDeployment`
-  without a filter, one `Get-CMDistributionStatus`; the last two are in `try/catch` and
-  degrade to an empty count and an empty content column
+Still not checked:
+
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
+
+## What the first real run of 1.1 found (2026-09-08)
+
+Three faults, all found by publishing one application on the production site.
+
+**A typo in a file detection path took the application down with it.**
+`%\ProgramFiles%` - the backslash inside the percent signs - reached
+`New-CMDetectionClauseFile`, which answered "Cannot validate argument on
+parameter 'Path'" and nothing else. By then the application existed and the run
+had stopped before its deployment type. `Get-DetectionFilePathProblem` now says
+what is wrong with a path - empty, ends at a folder, no folder at all, malformed
+variable, not absolute - and both the record editor and the clause builder use
+it, so such a path reaches neither `Apps.csv` nor the site.
+
+**An application without a deployment type reports as Foreign, for ever.** The
+tool signature lives in the deployment type comment, so a half created
+application cannot be recognised as ours, and publishing again hit the same
+error. Sorting the application into a console folder - cosmetic, and the step
+between creating the application and creating its deployment type - now sits
+inside a `try`, so nothing cosmetic can leave that state behind.
+
+**The content column could never say "arrived".** It read `NumberInstalled`;
+`Get-CMDistributionStatus` returns `SMS_ObjectContentExtraInfo`, whose counter is
+`NumberSuccess`. A property that is not there answers `$null`, `[int]$null` is 0,
+and the chain fell through to "targeted, not there yet" on every distributed
+package. `Get-StatusCount` reads candidate names and distinguishes "the counter
+is zero" from "this build has no such counter"; `NumberUnknown` is a state of
+its own now.
+
+And a lesson for the next one of these: errors now carry the file and line they
+came from (`Format-ErrorDetail`). Without that, the first of these three cost an
+hour of guessing.
 
 ## Identifiers out of the repository (2026-09-08)
 
@@ -75,18 +103,20 @@ in the history either. What the tool ships now are placeholders:
 
 Verified by walking every blob in the object database: no match left.
 
-Two things this does not solve, and both are worth knowing:
+Rewriting was not enough on its own. A force push deletes nothing on the server:
+it moves a ref, and the old objects stay readable by their SHA - which was
+verified, they were. Worse, `refs/pull/1/head` pinned a pre-rewrite commit, and
+a pull request ref cannot be deleted at all. So the repository was **deleted and
+recreated** from the clean history on 2026-09-08, and is public again. The old
+commits now answer `422 No commit found`, there are no `refs/pull/*`, and the
+repository holds three refs.
 
-* GitHub keeps unreachable objects after a force push. The old commit and the
-  old `config.json` were still readable by their SHA right after the rewrite.
-  Only deleting and recreating the repository - or asking GitHub support to
-  collect the garbage - removes them for certain.
-* Anyone who cloned or forked while it was public still has the old history.
+What that does not undo: anyone who cloned while it was public still has the old
+history. There were no forks (`forks=0`, `network=0`) at the time of deletion.
 
-The real values live on the machines that run the tool, in their own
-`config.json`, which `update.ps1` never overwrites. A `git pull` or
-`git reset --hard` **does** overwrite it, because the file is tracked - back it
-up before resetting a clone onto the rewritten history.
+`config.json` is no longer tracked. `Config\config.sample.json` ships with
+placeholders and `Get-AppHelperConfig` copies it on first start, so no pull,
+reset or update can overwrite the real configuration of a machine again.
 
 ## The selection survives an action (2026-09-08)
 
