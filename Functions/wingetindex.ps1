@@ -127,7 +127,19 @@ function Invoke-WingetIndexQuery {
     )
 
     $sqlite = Initialize-WingetSqlite
-    return @($sqlite::Query($Path, $Sql))
+
+    # Each row is emitted on its own and kept from unrolling, so that
+    # @(Invoke-WingetIndexQuery ...) is an array of rows for none, one or many
+    # of them alike.
+    #
+    # Returning the list plainly does not do that. PowerShell unrolls it, and a
+    # result of exactly one row then reaches the caller as that row itself:
+    # $rows[0] is the first *column* and $rows[0][0] its first character.
+    # 'SELECT COUNT(*) FROM ids' arrived as the character '1', [int]'1' is 49,
+    # and the index reported 49 packages instead of 14752. A single comma in
+    # front does not fix it either - the caller's own @() then wraps the whole
+    # result once more, and every row sits one level too deep.
+    foreach ($row in $sqlite::Query($Path, $Sql)) { , $row }
 }
 
 # A value on its way into a LIKE clause - the only thing that has to be escaped
@@ -205,7 +217,8 @@ function Update-WingetIndex {
     $count  = 0
     $schema = ''
     try {
-        $count = [int](Invoke-WingetIndexQuery -Path $fresh -Sql 'SELECT COUNT(*) FROM ids')[0][0]
+        $countRows = @(Invoke-WingetIndexQuery -Path $fresh -Sql 'SELECT COUNT(*) FROM ids')
+        $count = [int]$countRows[0][0]
         $meta  = @(Invoke-WingetIndexQuery -Path $fresh -Sql "SELECT name, value FROM metadata WHERE name IN ('majorVersion', 'minorVersion')")
         $schema = (($meta | Sort-Object { $_[0] } -Descending | ForEach-Object { $_[1] }) -join '.')
     }
