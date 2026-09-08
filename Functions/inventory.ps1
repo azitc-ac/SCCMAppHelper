@@ -84,6 +84,29 @@ function Get-AppPackage {
     enough to say whether this tool published it and whether the source has
     changed since (see Get-ContentFingerprint).
 #>
+<#
+    One counter of a distribution status object, by whichever of the given names
+    the site actually carries.
+
+    Reading a property that is not there answers $null, and [int]$null is 0 -
+    indistinguishable from "no distribution point has it". That is how content
+    sitting on every distribution point reported "targeted, not there yet" for
+    ever. Returns -1 when none of the names exist, so the caller can tell an
+    unknown shape from a real zero.
+#>
+function Get-StatusCount {
+    param(
+        [Parameter(Mandatory = $true)]$Status,
+        [Parameter(Mandatory = $true)][string[]]$Names
+    )
+
+    $available = @($Status.PSObject.Properties.Name)
+    foreach ($name in $Names) {
+        if ($available -contains $name) { return [int]$Status.$name }
+    }
+    return -1
+}
+
 function Get-CMApplicationState {
     param(
         $Config = (Get-ActiveConfig),
@@ -139,20 +162,36 @@ function Get-CMApplicationState {
 
         # Distribution status per package id: how many distribution points hold
         # the content, are still receiving it, or failed.
+        #
+        # The counters are read by name from a list of candidates, because a
+        # property that is not there answers $null, [int]$null is 0, and a count
+        # of zero is indistinguishable from "none of them have it". That is how
+        # content sitting on every distribution point reported "targeted, not
+        # there yet" for ever: the class calls its success counter NumberSuccess
+        # on some site versions and NumberInstalled on others, and reading only
+        # one of the two made the other one look like nothing had arrived.
         try {
             $byPackage = @{}
             foreach ($status in @(Get-CMDistributionStatus -ErrorAction Stop)) {
                 $byPackage[[string]$status.PackageID] = $status
             }
+
             foreach ($entry in $result.Values) {
                 if (-not $entry.PackageID -or -not $byPackage.ContainsKey($entry.PackageID)) { $entry.Content = 'Not distributed'; continue }
                 $status = $byPackage[$entry.PackageID]
+
+                $errors     = Get-StatusCount -Status $status -Names 'NumberErrors', 'NumberFailed'
+                $inProgress = Get-StatusCount -Status $status -Names 'NumberInProgress'
+                $installed  = Get-StatusCount -Status $status -Names 'NumberSuccess', 'NumberInstalled'
+                $targeted   = Get-StatusCount -Status $status -Names 'Targeted', 'NumberTargeted'
+
                 $entry.Content =
-                    if     ([int]$status.NumberErrors -gt 0)     { 'Error on {0} DP' -f $status.NumberErrors }
-                    elseif ([int]$status.NumberInProgress -gt 0) { 'In progress ({0} DP)' -f $status.NumberInProgress }
-                    elseif ([int]$status.NumberInstalled -gt 0)  { 'On {0} DP' -f $status.NumberInstalled }
-                    elseif ([int]$status.Targeted -gt 0)         { 'Targeted, not there yet' }
-                    else                                         { 'Not distributed' }
+                    if     ($errors -gt 0)     { 'Error on {0} DP' -f $errors }
+                    elseif ($inProgress -gt 0) { 'In progress ({0} DP)' -f $inProgress }
+                    elseif ($installed -gt 0)  { 'On {0} DP' -f $installed }
+                    elseif ($installed -lt 0)  { 'Distributed' }   # no counter this build understands
+                    elseif ($targeted -gt 0)   { 'Targeted, not there yet' }
+                    else                       { 'Not distributed' }
             }
         }
         catch { Write-Warn ("Could not read the distribution status: {0}" -f $_.Exception.Message) }
