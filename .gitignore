@@ -1,3 +1,5 @@
 Logs/
 *.log
 Config/winget-index/
+DEPLOYED-VERSION.txt
+token.dat
