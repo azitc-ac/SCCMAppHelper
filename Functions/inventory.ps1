@@ -318,8 +318,13 @@ function Get-AppInventory {
             foreach ($entry in $state.Values) {
                 $parsed = Split-AppFolderName -FolderName $entry.AppName
                 $key = & $keyOf $parsed.Name $parsed.Version
+                # An application that exists only in the site gets a row too,
+                # ours or not. Skipping the foreign ones made the documented
+                # view "In the site, not on the share" unable to show the very
+                # rows it is for: on the lab site two applications - one of them
+                # a customer package - were in the site, in no view, and in no
+                # count, with nothing saying so.
                 if (-not $rows.Contains($key)) {
-                    if ($entry.Origin -ne 'this tool') { continue }
                     $rows[$key] = & $newRow $parsed.Name $parsed.Version
                     if ($entry.Publisher) { $rows[$key].Publisher = $entry.Publisher }
                 }
