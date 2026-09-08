@@ -183,6 +183,7 @@ function Get-CMApplicationState {
                 $errors     = Get-StatusCount -Status $status -Names 'NumberErrors', 'NumberFailed'
                 $inProgress = Get-StatusCount -Status $status -Names 'NumberInProgress'
                 $installed  = Get-StatusCount -Status $status -Names 'NumberSuccess', 'NumberInstalled'
+                $unknown    = Get-StatusCount -Status $status -Names 'NumberUnknown'
                 $targeted   = Get-StatusCount -Status $status -Names 'Targeted', 'NumberTargeted'
 
                 $entry.Content =
@@ -190,6 +191,7 @@ function Get-CMApplicationState {
                     elseif ($inProgress -gt 0) { 'In progress ({0} DP)' -f $inProgress }
                     elseif ($installed -gt 0)  { 'On {0} DP' -f $installed }
                     elseif ($installed -lt 0)  { 'Distributed' }   # no counter this build understands
+                    elseif ($unknown -gt 0)    { 'Unknown on {0} DP' -f $unknown }
                     elseif ($targeted -gt 0)   { 'Targeted, not there yet' }
                     else                       { 'Not distributed' }
             }
