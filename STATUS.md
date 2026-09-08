@@ -61,6 +61,42 @@ a fake share. **Not yet checked**, because it needs Windows and a site:
 * `Tests\Test-Dialogs.ps1`, rewritten for the new window
 * the winget leg end to end through **Add... -> From winget**
 
+## Reading the list, tuned (2026-09-08)
+
+The list is read again after every action, and each read walked every package
+three times over: once to count what is in `Files\`, once to measure the path
+length, once for the content fingerprint. Now it walks once
+(`Measure-ContentFolder`) and keeps the result for the session
+(`Get-PackageScan`). The site - three provider calls - is kept the same way,
+keyed by site code so a site switch cannot hand back the wrong one.
+
+`Clear-InventoryCache` decides what an action invalidates: Refresh drops
+everything, Add and New version drop the share (a folder appeared), Build and
+Edit drop the packages they touched, Publish and Retire drop those and the site,
+and Open folder, Delete definition, a cancelled dialog and a failed action drop
+nothing - which is where the repeated wait came from.
+
+Three more things that were paid on every read and are not any more:
+
+* `Update-AppListSchema` rewrote `Apps.csv` every single time. It now writes
+  only when a column is missing or the rows are genuinely out of order.
+* the publisher of a package without a definition came from `Read-ADTMetadata`,
+  which parses the whole PSADT script through the AST - 40 ms per package. It is
+  one regex over the text now (`Get-PackagePublisher`), cached with the scan.
+* `Get-CMApplicationState` loaded each application's package XML into an `[xml]`
+  DOM to read one `Location` element, which nothing consumes. Regex instead.
+
+The fingerprint format is unchanged and was verified byte for byte against the
+previous implementation - the deployment types on the site carry fingerprints in
+that shape, and a different count or format would have reported every published
+package as changed.
+
+Measured against a fake share of 8 packages with 300 files each: first read
+1.67 s -> 0.95 s, a repeat read 0.49 s -> 0.12 s. What the real share and the
+real site cost is now printed on every read (`share X s, site Y s`) - the site
+leg is the one that has never been measured, and if it dominates, the next thing
+to look at is `Get-CMApplication` returning the package XML of every application.
+
 ## Uninstall previous versions (2026-09-08, not yet run on a client)
 
 New column `UninstallPrevious` and a checkbox in the record editor, **Explicitly uninstall all
