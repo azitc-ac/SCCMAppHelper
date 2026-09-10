@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Updates this installation to the current state of the repository.
 
