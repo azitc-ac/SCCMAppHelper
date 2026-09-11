@@ -1,0 +1,3 @@
+# The hook is a shell script; a CRLF checkout would break it.
+.githooks/* text eol=lf
+VERSION text eol=lf
