@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-11 (CLAUDE.md as the entry point; every commit raises the version and the title bar shows it)
+Last updated: 2026-09-11 (CLAUDE.md as the entry point; version per commit; open item: EXE package with an empty install block)
 
 ## Where it stands
 
@@ -911,6 +911,16 @@ Two more things surfaced on the way:
 
 ## Open items
 
+* **A package with an EXE installer and an empty install block cannot install.** Seen on
+  2026-09-11 on the lab client: `7-Zip - 26.02` holds `7z2602-x64.exe` in `Files` while
+  `Apps.csv` says MSI / ProductCode and the site's deployment type (revision 18) detects
+  `%ProgramFiles%-Zipz.exe`. `Invoke-AppDeployToolkit.ps1` has nothing under *Perform
+  Installation tasks here*, so the required deployment runs PSADT for 12 s, exits 0, installs
+  nothing, and detection fails (`EvaluationState` 4). It only ever looked installed because an
+  MSI-installed 7-Zip sat next to it; once that MSI was uninstalled (AZITC Toolkit test), the
+  gap showed. Two things to settle: the tool must write an install line for EXE packages (or
+  refuse to build one), and a winget package whose manifest offers both MSI and EXE must not
+  record MSI metadata while downloading the EXE.
 * **Line endings are not pinned.** The index holds LF, a checkout with `core.autocrlf=true`
   holds CRLF, and `git status` reports about twenty modified files with an empty diff on every
   machine. A `.gitattributes` with `* text=auto` plus one `git add --renormalize .` commit
