@@ -18,10 +18,17 @@
     Run in Windows PowerShell 5.1 with the ConfigMgr console installed.
 #>
 
-$toolVersion = '1.1'
-
 $rootDir = $PSScriptRoot
 if (-not $rootDir) { $rootDir = (Get-Location).Path }
+
+# The version lives in VERSION, one line. A pre-commit hook (.githooks) raises
+# its last number with every commit, so the title bar says which build this is.
+$toolVersion = '1.1'
+$versionFile = Join-Path $rootDir 'VERSION'
+if (Test-Path -LiteralPath $versionFile) {
+    $fileVersion = (Get-Content -LiteralPath $versionFile -TotalCount 1).Trim()
+    if ($fileVersion) { $toolVersion = $fileVersion }
+}
 
 $logDir = Join-Path $rootDir 'Logs'
 if (-not (Test-Path -LiteralPath $logDir)) { $null = New-Item -ItemType Directory -Path $logDir -Force }
@@ -64,7 +71,7 @@ while ($continue) {
     Write-Info ("{0} application(s)" -f @($inventory.Rows).Count)
 
     $choice = Show-InventoryDialog -Inventory $inventory.Rows `
-        -Title ("SCCMAppHelper - {0} [{1}] - https://blog.zarenko.net/" -f $config.siteName, $config.siteCode) `
+        -Title ("SCCMAppHelper {0} - {1} [{2}] - https://blog.zarenko.net/" -f $toolVersion, $config.siteName, $config.siteCode) `
         -SourceRoot $inventory.WorkRoot -SiteRead $inventory.SiteRead -Select $select
 
     # What was selected stays selected across the round trip. An action that

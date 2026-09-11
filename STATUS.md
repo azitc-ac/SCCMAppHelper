@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-11 (CLAUDE.md added as the entry point for a new session; line endings noted as an open item)
+Last updated: 2026-09-11 (CLAUDE.md as the entry point; every commit raises the version and the title bar shows it)
 
 ## Where it stands
 
@@ -21,6 +21,20 @@ The tool was written from scratch on 2026-08-27/28 as the ConfigMgr counterpart 
 `IntuneWin32Helper`, replacing the older scripts under `Powershell\SCCM`
 (`create-AppsInCM.ps1`, `add-NewMSIToAppsCSV.ps1`, `create-CollForOutdatedApps.ps1`,
 `add-ServerRoleToAppCollections.ps1`, `update-ins.req.dev.cols.ps1`).
+
+## A version per commit (2026-09-11)
+
+`VERSION` at the root holds the tool version, `1.1.x`, and `.githooks/pre-commit` raises the
+last number with every commit and stages the file. The start script reads it, the main window
+puts it into its title (`SCCMAppHelper 1.1.7 - <site> [<code>] - ...`), and `Get-ToolSignature`
+carries it into the deployment type comment as before - recognition still matches any
+version. A jump to 1.2.0 is made by editing `VERSION` and staging it; a staged `VERSION` is
+left alone by the hook. The hook is only active where `git config core.hooksPath .githooks`
+has been set, once per clone.
+
+Why: two installations - the lab server after `update.ps1`, a checkout being worked on -
+could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
+`update.ps1` ran.
 
 ## The main window (2026-09-01, run against both sites on 2026-09-08)
 
@@ -979,6 +993,8 @@ it with a warning, which is the intended behaviour for a collection that is not 
 * **Commit and push to `main` after every change**, without asking - the ConfigMgr server
   pulls from `azitc-ac/SCCMAppHelper` (private), so unpushed changes mean testing a stale
   version there.
+* **Every commit raises the version** - `.githooks/pre-commit` bumps the last number in
+  `VERSION` (since 2026-09-11, 1.1.x). Needs `git config core.hooksPath .githooks` once per clone.
 * When working on the server: **cm1 only**, never directly on CMSERVER.
 * First publish run on a new site with `distributeContent: false` and
   `createDeployments: false` - that creates only the application and its deployment type and
