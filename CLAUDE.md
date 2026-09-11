@@ -21,11 +21,14 @@ There is no separate backlog file: open work goes into `STATUS.md` under *Open i
   them back. `Config\config.json` is untracked for the same reason.
 - Windows PowerShell 5.1 (`powershell.exe`), never pwsh 7 - the ConfigurationManager module
   needs it. Scripts are UTF-8 **with BOM**.
-- Commit and push to `main` after every change - the lab server pulls this repository via
-  `update.ps1`, so an unpushed change means testing a stale build there.
+- Two installations, updated differently. The **lab server** is this git clone; work and
+  commits happen here. The **customer server** has no git and is updated with `update.ps1`,
+  which downloads `main` from GitHub as a zip - so commit and push to `main` after every
+  change, or the customer server pulls a stale build.
 - Every commit raises the version. `VERSION` holds it, `.githooks/pre-commit` bumps the last
-  number and stages the file; the hook only runs once `git config core.hooksPath .githooks` is
-  set in the clone - do that first in a fresh checkout. For a deliberate jump (1.2.0) edit
+  number and stages the file; the hook only runs where `git config core.hooksPath .githooks` is
+  set (done on the lab server; repeat it in any fresh clone). `update.ps1` carries `VERSION`
+  to the customer server like any other file. For a deliberate jump (1.2.0) edit
   `VERSION` and stage it yourself, the hook then leaves it alone. The title bar shows the
   version, and so does the deployment type comment (`SCCMAppHelper <version>`).
 - Work against the lab site only. Ask before anything that creates deployments or changes

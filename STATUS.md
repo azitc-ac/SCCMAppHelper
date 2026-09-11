@@ -982,17 +982,17 @@ Do not re-litigate these without a reason.
 
 | | Site | Server | Notes |
 | --- | --- | --- | --- |
-| Production | P01 | CMSERVER | packages under `\\CMSERVER\Sources\Applications` |
-| Lab | L01 | cm1.lab.example | test system, tool runs on the server itself, packages under `C:\Sources\Applications`, single DP `LAB01.lab.example`, collection folder `Deployment\Software` |
+| Production | P01 | CMSERVER | no git, updated with `update.ps1`; packages under `\\CMSERVER\Sources\Applications` |
+| Lab | L01 | cm1.lab.example | test system, holds the git clone, tool runs on the server itself, packages under `C:\Sources\Applications`, single DP `LAB01.lab.example`, collection folder `Deployment\Software` |
 
 `ins-avl-dev-ALLE APPS` from `globalDeployments` does not exist on L01 - the publish run skips
 it with a warning, which is the intended behaviour for a collection that is not there.
 
 ## Working agreements
 
-* **Commit and push to `main` after every change**, without asking - the ConfigMgr server
-  pulls from `azitc-ac/SCCMAppHelper` (private), so unpushed changes mean testing a stale
-  version there.
+* **Commit and push to `main` after every change**, without asking - the customer server has
+  no git and is updated with `update.ps1`, which downloads `main` as a zip; unpushed changes
+  mean a stale build there. The lab server is the git clone itself.
 * **Every commit raises the version** - `.githooks/pre-commit` bumps the last number in
   `VERSION` (since 2026-09-11, 1.1.x). Needs `git config core.hooksPath .githooks` once per clone.
 * When working on the server: **cm1 only**, never directly on CMSERVER.
