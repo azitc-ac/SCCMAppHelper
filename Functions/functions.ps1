@@ -15,7 +15,15 @@
 #>
 
 if (-not $rootDir) { $rootDir = Split-Path -Parent $PSScriptRoot }
-if (-not $toolVersion) { $toolVersion = '1.1' }
+if (-not $toolVersion) {
+    # Loaded without the start script - a test, or a dot-source at a prompt.
+    $toolVersion = '1.1'
+    $versionFile = Join-Path $rootDir 'VERSION'
+    if (Test-Path -LiteralPath $versionFile) {
+        $fileVersion = (Get-Content -LiteralPath $versionFile -TotalCount 1).Trim()
+        if ($fileVersion) { $toolVersion = $fileVersion }
+    }
+}
 
 . "$rootDir\Functions\ui.ps1"
 . "$rootDir\Functions\setup.ps1"

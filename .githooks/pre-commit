@@ -1,0 +1,17 @@
+#!/bin/sh
+# Raise the last number in VERSION with every commit, so the build that runs
+# on a server can be told apart from the one before it. A VERSION that is
+# already staged - a deliberate jump to 1.2.0, say - is left as it is.
+#
+# Activate once per clone:  git config core.hooksPath .githooks
+cd "$(git rev-parse --show-toplevel)" || exit 1
+if git diff --cached --quiet -- VERSION; then
+    v=$(tr -d '\r\n' < VERSION)
+    base=${v%.*}
+    patch=${v##*.}
+    case "$patch" in
+        ''|*[!0-9]*) echo "pre-commit: VERSION '$v' does not end in a number" >&2; exit 1 ;;
+    esac
+    printf '%s.%s\n' "$base" $((patch + 1)) > VERSION
+    git add VERSION
+fi

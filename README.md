@@ -35,6 +35,10 @@ files onto it - a server reachable over RDP and nothing else. It downloads the c
 files alone: `Config\config.json`, `Apps.csv`, `Logs\` and `Config\winget-index\`. Nothing is
 deleted, and the commit it came from is written to `DEPLOYED-VERSION.txt`.
 
+The title bar of the main window shows the version of the build that is running, read from
+`VERSION`; every commit raises its last number, so two installations can be compared at a
+glance.
+
 Installing, in one line in the RDP session:
 
 ```powershell
