@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-08 (first real run of 1.1, then the winget index and the dialog test - seven faults fixed in total)
+Last updated: 2026-09-11 (CLAUDE.md added as the entry point for a new session; line endings noted as an open item)
 
 ## Where it stands
 
@@ -897,6 +897,11 @@ Two more things surfaced on the way:
 
 ## Open items
 
+* **Line endings are not pinned.** The index holds LF, a checkout with `core.autocrlf=true`
+  holds CRLF, and `git status` reports about twenty modified files with an empty diff on every
+  machine. A `.gitattributes` with `* text=auto` plus one `git add --renormalize .` commit
+  ends that; nothing in the tool depends on the line ending, `update.ps1` unpacks a zip.
+  Noted 2026-09-11, not done yet.
 * **The lab is clean of `SCCMAppHelper Testapp`** - no applications, no collections, no package
   folders. The five `Apps.csv` rows are still there, which is what the workflow promises. They
   can go by hand whenever they are in the way.
