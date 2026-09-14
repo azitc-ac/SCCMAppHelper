@@ -4,3 +4,7 @@ Config/winget-index/
 DEPLOYED-VERSION.txt
 token.dat
 Config/config.json
+
+# working notes stay local
+CLAUDE.md
+.claude/
