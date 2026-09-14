@@ -222,16 +222,18 @@ The block is generated from the row, not stored in it:
 ## <Perform Pre-Installation tasks here>
         # --- SCCMAppHelper PreInstall begin - rewritten from Apps.csv on every build ---
         $targetVersion = [version]'8.9.8'
-        $versionFilter = { ... $parsed -lt $targetVersion }
+        $ourInstallerIsMsi = $false
+        $previousFilter = { ... $older -or $otherKind }
 
         $components = @(
-            @{ Name = 'Notepad++'; Type = 'All' }
+            @{ Name = 'Notepad++' }
         )
-        ... Uninstall-ADTApplication -Name $component.Name -FilterScript $versionFilter ...
+        ... Uninstall-ADTApplication -Name $component.Name -ApplicationType MSI -FilterScript $previousFilter
+        ... Uninstall-ADTApplication -Name $component.Name -ApplicationType EXE -FilterScript $previousFilter
         # --- SCCMAppHelper PreInstall end ---
 ```
 
-Two things decide what it removes, and both come from the row:
+Three things decide what it removes - two come from the row, one from the package:
 
 * **the version** is the target - only installations that parse as a version *and* are lower
   are touched, so the same version and anything newer stay. A version that cannot be parsed
@@ -243,7 +245,20 @@ Two things decide what it removes, and both come from the row:
   checkbox before anything is saved - worth a look for a product whose name is a prefix of
   other products.
 
+* **the kind of installer** this package holds - an MSI in `Files\` or not. An installation of
+  the product made by the *other* kind is removed whatever its version. Two installers of one
+  product share a folder; an EXE-installed 7-Zip 26.01 next to an MSI-installed 7-Zip 26.02 was
+  the case that showed it: the version rule alone kept the MSI, which then owned nothing but a
+  registry entry. MSI entries go first (msiexec removes its files cleanly), EXE entries second.
+
 Unticking the box removes the block again on the next build.
+
+Two warnings at build time belong to the same family of mistakes: a row whose `ProductCode` is
+set while `Files\` holds no MSI (a winget manifest that offers both installers) - a Registry or
+MSI detection built from that code looks for a key this package never writes and reports
+"installed" wherever the MSI is present by other means, so nothing ever runs; and an EXE
+package without an `UninstallCmd` - its uninstall deployment type, and every supersedence that
+relies on it, removes nothing.
 
 `DetectionMethod` is a list rather than a free text field, and what `DetectionPattern` has to
 contain depends on it - so the hint under the field follows the method, and the field is

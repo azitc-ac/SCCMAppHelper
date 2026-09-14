@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-11 (CLAUDE.md as the entry point; version per commit; open item: EXE package with an empty install block)
+Last updated: 2026-09-14 (uninstall previous versions also removes the other installer kind; two build-time warnings)
 
 ## Where it stands
 
@@ -36,6 +36,38 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
+## Two installers of one product (2026-09-14)
+
+A customer client had `7-Zip 26.01 (x64)` (the EXE installer, key `7-Zip`) and
+`7-Zip 26.02 (x64 edition)` (the MSI, key `{23170F69-...}`) side by side, and the new
+`7-Zip - 26.02` application with *uninstall previous versions* and supersedence never touched
+either. Read from the generated block and the detection code, verified with the AZITC Toolkit
+on the client:
+
+* The `Registry` detection with an empty `DetectionPattern` falls back to the **ProductCode**
+  as the uninstall key (`New-AppDetectionClause`). The 7-Zip row carries the MSI's ProductCode
+  from the winget manifest while `Files\` holds the EXE - so the detection looked for the MSI's
+  key, found the foreign MSI, and reported "installed". The install never ran, and with it
+  neither the pre-install block nor the supersedence uninstall. File detection on `7z.exe`
+  fails the same way, the MSI provides the file.
+* The pre-install block removed only versions **below** the target. The MSI is `26.02.00.0`,
+  not below `26.02`, so it stayed - and after the EXE's `Uninstall.exe /S` had emptied the
+  shared folder, its registration would have been a leftover.
+
+Changed: `Get-UninstallPreviousCommand` takes the package's installer kind (an MSI in `Files\`
+or not, `Get-PackageMsi`) and the generated filter is `older -or otherKind`: an installation
+made by the other kind of installer goes whatever its version. MSI entries are uninstalled
+first (msiexec removes its files cleanly), EXE entries second. Filter checked against the
+customer's rows for both package kinds - the EXE package removes 26.01 EXE and 26.02 MSI, keeps
+its own 26.02 EXE and a newer EXE; the MSI package mirrors that. `Test-Dialogs.ps1`: 56 of 56.
+
+Two warnings at build time, both seen on a throwaway package: `ProductCode` set while
+`Files\` holds no MSI (with a Registry/MSI detection and no `DetectionPattern`), and an EXE
+package without `UninstallCmd` - its uninstall deployment type removes nothing, and so does
+every supersedence that relies on it.
+
+Not changed: the row. `DetectionPattern` has to name the key the EXE writes (`7-Zip`); the
+tool warns, it does not guess.
 ## The main window (2026-09-01, run against both sites on 2026-09-08)
 
 The start menu with its four verbs is gone. The tool opens on one list, `Get-AppInventory` in
@@ -911,16 +943,9 @@ Two more things surfaced on the way:
 
 ## Open items
 
-* **A package with an EXE installer and an empty install block cannot install.** Seen on
-  2026-09-11 on the lab client: `7-Zip - 26.02` holds `7z2602-x64.exe` in `Files` while
-  `Apps.csv` says MSI / ProductCode and the site's deployment type (revision 18) detects
-  `%ProgramFiles%-Zipz.exe`. `Invoke-AppDeployToolkit.ps1` has nothing under *Perform
-  Installation tasks here*, so the required deployment runs PSADT for 12 s, exits 0, installs
-  nothing, and detection fails (`EvaluationState` 4). It only ever looked installed because an
-  MSI-installed 7-Zip sat next to it; once that MSI was uninstalled (AZITC Toolkit test), the
-  gap showed. Two things to settle: the tool must write an install line for EXE packages (or
-  refuse to build one), and a winget package whose manifest offers both MSI and EXE must not
-  record MSI metadata while downloading the EXE.
+* **EXE package, empty install block, MSI metadata** - settled on 2026-09-14, see *Two installers
+  of one product* above. What is left is the row itself: `Apps.csv` still has to say what the
+  package really installs; the tool warns now, it does not rewrite the row.
 * **Line endings are not pinned.** The index holds LF, a checkout with `core.autocrlf=true`
   holds CRLF, and `git status` reports about twenty modified files with an empty diff on every
   machine. A `.gitattributes` with `* text=auto` plus one `git add --renormalize .` commit

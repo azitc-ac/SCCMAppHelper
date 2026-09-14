@@ -1203,7 +1203,15 @@ function Get-ProductSearchName {
     existing block from the script again.
 #>
 function Get-UninstallPreviousCommand {
-    param([Parameter(Mandatory = $true)]$App)
+    param(
+        [Parameter(Mandatory = $true)]$App,
+        # What this package installs - 'MSI' when Files\ holds an MSI, 'EXE' otherwise.
+        # An entry of the other kind is removed whatever its version: an EXE-installed
+        # 7-Zip 26.01 next to an MSI-installed 7-Zip 26.02 was the case that showed why.
+        # Two installers of one product share a folder, and the one this package does
+        # not manage would otherwise stay registered for ever, its files owned by ours.
+        [ValidateSet('MSI', 'EXE')][string]$InstallerType = 'EXE'
+    )
 
     if (-not (Test-AppFlag -Value $App.UninstallPrevious)) { return '' }
 
@@ -1218,16 +1226,24 @@ function Get-UninstallPreviousCommand {
     $searchName = Get-ProductSearchName -Name $App.Name
 
     $template = @'
-## Remove every older version of the product before installing this one.
+## Remove every older version of the product before installing this one, and every
+## installation of it made by the other kind of installer (this package installs <TYPE>),
+## whatever its version - two installers of one product share the folder, and the one
+## we do not manage would stay registered while our files sit underneath it.
 $targetVersion = [version]'<VERSION>'
-$versionFilter = {
+$ourInstallerIsMsi = $<ISMSI>
+$previousFilter = {
     $v = $_.DisplayVersion
     $parsed = $null
-    $v -and [version]::TryParse($v, [ref]$parsed) -and $parsed -lt $targetVersion
+    $older = $v -and [version]::TryParse($v, [ref]$parsed) -and $parsed -lt $targetVersion
+    # Registry rows carry WindowsInstaller as 1/0, PSADT's application objects as a bool.
+    $isMsi = ($_.WindowsInstaller -eq 1) -or ($_.WindowsInstaller -eq $true)
+    $otherKind = ($isMsi -ne $ourInstallerIsMsi)
+    $older -or $otherKind
 }
 
 $components = @(
-    @{ Name = '<NAME>'; Type = 'All' }
+    @{ Name = '<NAME>' }
 )
 
 foreach ($component in $components) {
@@ -1236,13 +1252,16 @@ foreach ($component in $components) {
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' `
         -ErrorAction Ignore |
         Where-Object { $_.DisplayName -like "*$($component.Name)*" } |
-        Where-Object $versionFilter
+        Where-Object $previousFilter
 
     if ($found) {
         $found | ForEach-Object {
-            Write-ADTLogEntry -Message "Found previous component '$($_.DisplayName)' $($_.DisplayVersion) - uninstalling."
+            Write-ADTLogEntry -Message "Found component '$($_.DisplayName)' $($_.DisplayVersion) (WindowsInstaller=$($_.WindowsInstaller)) - uninstalling."
         }
-        Uninstall-ADTApplication -Name $component.Name -ApplicationType $component.Type -FilterScript $versionFilter
+        # MSI first: msiexec removes its own files cleanly. An EXE uninstaller run first
+        # would empty the shared folder and leave the MSI registration behind as a leftover.
+        Uninstall-ADTApplication -Name $component.Name -ApplicationType MSI -FilterScript $previousFilter
+        Uninstall-ADTApplication -Name $component.Name -ApplicationType EXE -FilterScript $previousFilter
         Write-ADTLogEntry -Message "Uninstall of '$($component.Name)' complete."
     } else {
         Write-ADTLogEntry -Message "Component '$($component.Name)' not found or already current - skipping."
@@ -1250,7 +1269,9 @@ foreach ($component in $components) {
 }
 '@
 
-    return $template.Replace('<VERSION>', $App.Version.Trim()).Replace('<NAME>', $searchName.Replace("'", "''"))
+    $isMsi = 'false'
+    if ($InstallerType -eq 'MSI') { $isMsi = 'true' }
+    return $template.Replace('<VERSION>', $App.Version.Trim()).Replace('<NAME>', $searchName.Replace("'", "''")).Replace('<TYPE>', $InstallerType).Replace('<ISMSI>', $isMsi)
 }
 
 function New-DetectionScript {
@@ -1506,16 +1527,36 @@ function New-AppPackage {
         }
     }
 
+    # What this package actually installs decides which foreign installations the
+    # pre-install block may remove, and whether the detection can trust a ProductCode.
+    $packageMsi = Get-PackageMsi -ContentRoot $contentPath
+    $installerType = 'EXE'
+    if ($packageMsi) { $installerType = 'MSI' }
+    if (-not $packageMsi -and [string]::IsNullOrWhiteSpace([string]$App.UninstallCmd)) {
+        # PSADT uninstalls an MSI by itself (zero-config); an EXE it cannot. Without an
+        # UninstallCmd the application's uninstall deployment type runs and removes nothing -
+        # and supersedence, which uninstalls through exactly that, is silently toothless.
+        Write-Warn ("No UninstallCmd for an EXE package - the application's uninstall (and every supersedence that relies on it) removes nothing. Give the silent uninstall, e.g. Start-ADTProcess -FilePath `"`$envProgramFiles\{0}\Uninstall.exe`" -ArgumentList '/S'" -f $App.Name)
+    }
+    if (-not $packageMsi -and $App.ProductCode -and $App.DetectionMethod -in @('MSI', 'Registry') -and -not $App.DetectionPattern) {
+        # The row came from a winget manifest that offers both installers: MSI metadata, EXE
+        # in Files. The detection then looks for the MSI's uninstall key, which this package
+        # never writes - and reports "installed" on every client that has the MSI by other
+        # means, so the install (and the uninstall of previous versions) never runs.
+        Write-Warn ("ProductCode [{0}] is set but Files\ holds no MSI - this package installs an EXE. A detection built from the ProductCode looks for the MSI's key, which this package never writes. Set DetectionPattern to the uninstall key the EXE installer creates (its ARP key name) or switch to file detection." -f $App.ProductCode)
+    }
+
     # The generated pre-install block. Switched off, the empty command removes
     # the block that is there - so unticking the box undoes it on the next build.
-    $preInstall = Get-UninstallPreviousCommand -App $App
+    $preInstall = Get-UninstallPreviousCommand -App $App -InstallerType $installerType
     $preResult  = Set-PackageCommand -FilePath $adtScript -Section 'PreInstall' -Command $preInstall -Verbatim
 
     if (-not $preInstall) {
         if ($preResult -eq 'replaced') { Write-Ok 'Uninstall of previous versions removed from the package.' }
     }
     else {
-        $searched = "searches the uninstall registry for '*{0}*' and removes every version below {1}" -f (Get-ProductSearchName -Name $App.Name), $App.Version.Trim()
+        $other = 'MSI'; if ($installerType -eq 'MSI') { $other = 'EXE' }
+        $searched = "searches the uninstall registry for '*{0}*' and removes every version below {1} and every {2}-installed one whatever its version" -f (Get-ProductSearchName -Name $App.Name), $App.Version.Trim(), $other
         switch ($preResult) {
             'replaced'  { Write-Ok   "Uninstall of previous versions updated - $searched." }
             'inserted'  { Write-Ok   "Uninstall of previous versions written into the pre-install section - $searched." }

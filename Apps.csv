@@ -1,5 +1,5 @@
 ﻿"Publisher";"Name";"Version";"DetectionMethod";"DetectionPattern";"ProductCode";"InstallCmd";"UninstallCmd";"UninstallPrevious";"Notes"
-"Igor Pavlov";"7-Zip";"26.02.00.0";"MSI";"";"{23170F69-40C1-2702-2602-000001000000}";"";"";"false";"7zip.7zip 26.02 from winget-pkgs (x64, wix)"
+"Igor Pavlov";"7-Zip";"26.02";"File";"%ProgramFiles%\7-Zip\7z.exe";"{23170F69-40C1-2702-2602-000001000000}";"Start-ADTProcess -FilePath '7z2602-x64.exe' -ArgumentList '/S' -WindowStyle 'Hidden'";"";"true";"7zip.7zip 26.02 from winget-pkgs (x64, wix)"
 "Microsoft Corporation";"Microsoft SQL Server Management Studio";"22.9.2";"File";"C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\SSMS.exe";"";"$vswhere = ""${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe""
 $installPath = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release'
 $verb = if ((Test-Path $vswhere) -and (& $vswhere -products * -path $installPath -property installationVersion 2>$null)) { 'update' } else { 'install' }
@@ -8,5 +8,6 @@ Start-ADTProcess -FilePath 'vs_SSMS.exe' -ArgumentList ""$verb --installPath `""
 "geek software GmbH";"PDF24 Creator";"11.30.1";"MSI";"";"{2B4DC485-D730-49AB-BD17-9E67B2ADA492}";"";"";"false";"geeksoftwareGmbH.PDF24Creator 11.30.1 from winget-pkgs (x64, wix)"
 "Sysinternals";"Process Explorer";"17.13";"Registry";"";"";"Start-ADTProcess -FilePath 'ProcessExplorer.zip'   # no silent switch in the manifest - check it";"";"false";"Microsoft.Sysinternals.ProcessExplorer 17.13 from winget-pkgs (x64, zip)"
 "Simon Tatham";"PuTTY";"0.84.0.0";"MSI";"";"{FEE89B49-1A47-476C-864C-1D5076FC2891}";"";"";"false";"PuTTY.PuTTY 0.84.0.0 from winget-pkgs (x64, wix)"
+"Simon Tatham";"PuTTY";"0.85.0.0";"MSI";"";"{3B0346D3-155D-43E5-9561-B9BE51CF2EB6}";"";"";"false";"PuTTY.PuTTY 0.85.0.0 from winget-pkgs (x64, wix)"
 "Devolutions inc.";"Remote Desktop Manager";"2025.1.25.0";"MSI";"";"{84C8A595-4561-42B9-8AB3-0EAF5C5607CF}";"";"";"false";""
 "Devolutions inc.";"Remote Desktop Manager";"2026.2.18.0";"MSI";"";"{558D83E1-0E6F-46A7-A4D0-0D117F274604}";"";"";"false";"Devolutions.RemoteDesktopManager 2026.2.18.0 from winget-pkgs (x64, msi)"
