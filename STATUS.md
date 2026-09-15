@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-15 (record editor: ProductCode read-only, DetectionMethod a fixed list, one-line hints with tooltips, Registry detection needs a key)
+Last updated: 2026-09-15 (MSI packages: explicit Start-ADTMsiProcess instead of zero-config - the 0x87D00324 on every MSI package rebuilt after a detection change; record editor tightened)
 
 ## Where it stands
 
@@ -36,6 +36,29 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
+## MSI packages installed nothing (2026-09-15, evening)
+
+Found with the AZITC Toolkit's Troubleshoot on a customer client and on the lab client alike:
+Notepad++ 8.9.8 (MSI package) - installer exit 0 after 9 s, then "not detected" (0x87D00324),
+three times in a row, Add/Remove Programs empty. The PSADT log shows Pre-Install, then
+Post-Install, no `[Install]` phase, no `Discovered Zero-Config MSI installation file` line.
+
+The chain: an MSI row leaves `InstallCmd` empty and relies on PSADT's zero-config MSI
+deployment, which only fires while `AppName` is empty. `Set-ADTAppMetadata` never blanks a
+field. The package had been built once with File or Registry detection, which wrote
+`AppName = 'Notepad++'`; switching the row back to MSI left it there, so zero-config stayed
+off and the Install block was empty. Exit 0, nothing installed, the MSI detection - correct
+in itself - found nothing.
+
+Changed: every package gets its metadata; an MSI package gets
+`Start-ADTMsiProcess -Action Install -FilePath '<msi>'` and the Uninstall counterpart written
+into its blocks on every build (the row's command fields are ignored for it, the editor greys
+them out); the ProductCode for the detection is always read from the MSI in `Files`, with a
+warning when the row says something else. `Get-PackageMetadata` treats a package with one
+MSI in `Files` as an MSI package whatever its metadata says.
+
+To do on each installation: rebuild and publish every MSI package (lab: Notepad++ 8.9.8;
+customer: the same), then "Policy + evaluate" on a client and watch the attempt in Troubleshoot.
 ## The record editor says less, and allows less (2026-09-15)
 
 The user's rule for every dialog: short text between the fields, the explanation in the
@@ -1019,8 +1042,9 @@ Do not re-litigate these without a reason.
   It used to sit in the header of the generated detection script, which stops working the
   moment detection is a native clause. `Get-AppPackage` reads it back to tell
   `Published (this tool)` from `Published (foreign)`.
-* **MSI packages keep their PSADT metadata empty** on purpose, so PSADT runs its zero-config
-  MSI deployment. Publisher and ProductCode are read from the single MSI in `.\Files`.
+* **MSI packages are installed by an explicit `Start-ADTMsiProcess`** written into the
+  package (since 2026-09-15); the ProductCode for the detection is read from the MSI in
+  `.\Files`. Zero-config is not relied on any more - it only fires while `AppName` is empty.
 * **The folder name is authoritative** for name and version - it is the naming convention the
   whole workflow rests on and it is what the ConfigMgr application is named after.
 * **`deploy.ps1` inside a package stays thin.** All logic lives in the tool, so fixes reach

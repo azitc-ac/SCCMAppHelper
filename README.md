@@ -441,11 +441,13 @@ There is no separate metadata file - a package describes itself:
 | Description | `Notes` of the matching `Apps.csv` row, otherwise the name |
 | Detection | the `Apps.csv` row - rendered into clauses or a script at publish time |
 
-**MSI packages** are the deliberate exception. When `DetectionMethod` is `MSI`, the tool
-leaves `AppVendor`, `AppName` and `AppVersion` empty so PSADT runs its zero-config MSI
-deployment and takes them from the MSI itself. Publisher and ProductCode are then read
-straight out of the single MSI in `.\Files` - nothing has to be maintained by hand, and
-detection is by ProductCode.
+**MSI packages**: the tool writes `Start-ADTMsiProcess -Action Install -FilePath '<the MSI>'`
+into the Install block and the Uninstall counterpart into the Uninstall block; the row's
+command fields are ignored (the editor greys them out). The ProductCode for the detection is
+read from the MSI in `.\Files` at publish time, not from the row. Until 2026-09-15 the tool
+relied on PSADT's zero-config MSI deployment instead, which only fires while `AppName` is
+empty - a package once built with another detection method kept its `AppName`, so nothing
+was installed and every deployment ended in 0x87D00324.
 
 `$adtSession` is read through the PowerShell AST, so reformatting or double quotes do not
 break it.

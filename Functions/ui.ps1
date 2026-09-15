@@ -430,7 +430,7 @@ function Clear-CommandFields {
         $TextBoxes[$key].Text = ''
         $TextBoxes[$key].IsEnabled = $false
         $TextBoxes[$key].Background = [System.Windows.Media.Brushes]::WhiteSmoke
-        $TextBoxes[$key].ToolTip = 'Handled by the PSADT zero-config MSI deployment - leave empty.'
+        $TextBoxes[$key].ToolTip = 'Written by the tool: Start-ADTMsiProcess with the MSI in Files.'
     }
 }
 

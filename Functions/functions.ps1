@@ -1500,23 +1500,29 @@ function New-AppPackage {
     $author = $Config.packageAuthor
     if ([string]::IsNullOrWhiteSpace($author)) { $author = $env:USERNAME }
 
-    # A single MSI is deployed by PSADT in zero-config mode: vendor, name and
-    # version have to stay empty so PSADT takes them from the MSI itself.
-    if ($App.DetectionMethod -eq 'MSI') {
-        Set-ADTAppMetadata -ContentRoot $contentPath -Author $author
-        Write-Info 'MSI package - AppVendor/AppName/AppVersion left empty for the PSADT zero-config deployment.'
-    }
-    else {
-        Set-ADTAppMetadata -ContentRoot $contentPath -Publisher $App.Publisher -Name $App.Name -Version $App.Version -Author $author
-        Write-Ok 'PSADT script metadata filled in.'
-    }
+    # Name, vendor and version go into the script for every package. Until 2026-09-15 an
+    # MSI package left them empty and relied on PSADT's zero-config MSI deployment, which
+    # only fires while AppName is empty - and Set-ADTAppMetadata never blanks a field, so a
+    # package once built with another detection method kept its AppName, zero-config stayed
+    # off, the Install block was empty and every install ended with exit 0 and nothing on the
+    # device (0x87D00324 on the lab client and on a customer client). The MSI is now installed
+    # by an explicit Start-ADTMsiProcess written into the Install and Uninstall blocks.
+    Set-ADTAppMetadata -ContentRoot $contentPath -Publisher $App.Publisher -Name $App.Name -Version $App.Version -Author $author
+    Write-Ok 'PSADT script metadata filled in.'
+
+    # What this package actually installs decides the commands, which foreign installations
+    # the pre-install block may remove, and whether the detection can trust a ProductCode.
+    $packageMsi = Get-PackageMsi -ContentRoot $contentPath
 
     # The commands are rewritten on every build, so the Apps.csv row stays the
     # source of truth. Correcting a row used to change nothing at all, because
-    # the injection ran once and never again.
+    # the injection ran once and never again. An MSI package gets its commands
+    # from the MSI in Files; the row's fields are ignored for it (the editor
+    # greys them out).
     $adtScript = (Get-ADTScript -ContentRoot $contentPath).Path
     foreach ($section in 'Install', 'Uninstall') {
         $command = $(if ($section -eq 'Install') { $App.InstallCmd } else { $App.UninstallCmd })
+        if ($packageMsi) { $command = "Start-ADTMsiProcess -Action $section -FilePath '$($packageMsi.Name)'" }
         switch (Set-PackageCommand -FilePath $adtScript -Section $section -Command $command -TakeOver) {
             'replaced'     { Write-Ok   "$section command updated from the app list." }
             'inserted'     { Write-Ok   "$section command written into the package." }
@@ -1527,9 +1533,6 @@ function New-AppPackage {
         }
     }
 
-    # What this package actually installs decides which foreign installations the
-    # pre-install block may remove, and whether the detection can trust a ProductCode.
-    $packageMsi = Get-PackageMsi -ContentRoot $contentPath
     $installerType = 'EXE'
     if ($packageMsi) { $installerType = 'MSI' }
     if (-not $packageMsi -and [string]::IsNullOrWhiteSpace([string]$App.UninstallCmd)) {
@@ -1658,14 +1661,16 @@ function Resolve-PackageApp {
         $app.ProductCode     = $Metadata.productCode
     }
 
-    # For an MSI package the ProductCode does not have to be maintained by hand -
-    # it is read from the MSI that is going to be deployed.
-    if ($app.DetectionMethod -eq 'MSI' -and -not $app.ProductCode) {
+    # For an MSI package the ProductCode is read from the MSI that is going to be deployed -
+    # the row's value (a winget manifest, an earlier import) may belong to another build.
+    if ($app.DetectionMethod -eq 'MSI') {
         $contentPath = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
         $msi = Get-PackageMsi -ContentRoot $contentPath
         if ($msi) {
-            $app.ProductCode = [string](Get-MsiProperties -Path $msi.FullName)['ProductCode']
-            Write-Info "ProductCode read from $($msi.Name): $($app.ProductCode)"
+            $fromMsi = [string](Get-MsiProperties -Path $msi.FullName)['ProductCode']
+            if ($app.ProductCode -and $fromMsi -and $app.ProductCode -ne $fromMsi) { Write-Warn "ProductCode in the app list [$($app.ProductCode)] is not the one in $($msi.Name) [$fromMsi] - using the MSI's." }
+            if ($fromMsi) { $app.ProductCode = $fromMsi }
+            Write-Info "ProductCode from $($msi.Name): $($app.ProductCode)"
         }
         else {
             Write-Warn 'DetectionMethod is MSI but .\Files does not hold exactly one MSI - detection falls back to the registry.'
@@ -2062,9 +2067,10 @@ function Get-PackageMetadata {
     $adt = Read-ADTMetadata -ContentRoot $contentPath
     $msi = Get-PackageMsi -ContentRoot $contentPath
 
-    # PSADT derives vendor, name and version from the MSI when the session
-    # metadata is left empty - that is the zero-config case.
-    $isZeroConfigMsi = ($null -ne $msi) -and -not $adt.Name -and -not $adt.Version
+    # A package with one MSI in Files is an MSI package, whatever the session metadata
+    # says - the tool fills AppName for every package since 2026-09-15 (the property keeps
+    # its old name so its readers need no change).
+    $isZeroConfigMsi = ($null -ne $msi)
 
     $name        = $parsed.Name
     $version     = $parsed.Version
@@ -2189,7 +2195,7 @@ function Import-AppPackage {
     # The package itself outranks the list: a zero-config MSI package brings its
     # own publisher, version and ProductCode.
     if ($existing.isZeroConfigMsi) {
-        Write-Info 'Single MSI without PSADT metadata - zero-config deployment, detection by ProductCode.'
+        Write-Info 'Single MSI in Files - MSI package, detection by its ProductCode.'
         $app.DetectionMethod = 'MSI'
         $app.ProductCode     = $existing.productCode
     }
@@ -2220,13 +2226,10 @@ function Import-AppPackage {
     if (-not $app.Version) { throw "No version could be determined for [$folderName] - expected a folder named '<Name> - <Version>'." }
 
     # Write the metadata where it belongs: into the package's own PSADT script.
-    # Zero-config MSI packages keep their empty fields.
-    if (-not $existing.isZeroConfigMsi) {
-        $author = $Config.packageAuthor
-        if ([string]::IsNullOrWhiteSpace($author)) { $author = $env:USERNAME }
-        Set-ADTAppMetadata -ContentRoot $content -Publisher $app.Publisher -Name $app.Name -Version $app.Version -Author $author
-        Write-Ok ("Metadata written into {0} (empty fields only)." -f (Split-Path -Leaf $adt.Path))
-    }
+    $author = $Config.packageAuthor
+    if ([string]::IsNullOrWhiteSpace($author)) { $author = $env:USERNAME }
+    Set-ADTAppMetadata -ContentRoot $content -Publisher $app.Publisher -Name $app.Name -Version $app.Version -Author $author
+    Write-Ok ("Metadata written into {0} (empty fields only)." -f (Split-Path -Leaf $adt.Path))
 
     # The hand written commands become the tool's block, so the row is the
     # source of truth from here on. Same lines, only wrapped.
