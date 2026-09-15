@@ -396,7 +396,7 @@ ConfigMgr console module and PSAppDeployToolkit 4.0.6.
 * metadata model: normal package and zero-config MSI package against a real MSI, `$adtSession`
   parsing with single and double quotes
 
-### Reported working on cm1 by Alex
+### Reported working on LAB01
 
 * setup assistant: discovery and the dialog sequence
 
@@ -1018,7 +1018,7 @@ Do not re-litigate these without a reason.
 | | Site | Server | Notes |
 | --- | --- | --- | --- |
 | Production | P01 | CMSERVER | no git, updated with `update.ps1`; packages under `\\CMSERVER\Sources\Applications` |
-| Lab | L01 | cm1.lab.example | test system, holds the git clone, tool runs on the server itself, packages under `C:\Sources\Applications`, single DP `LAB01.lab.example`, collection folder `Deployment\Software` |
+| Lab | L01 | LAB01.lab.example | test system, holds the git clone, tool runs on the server itself, packages under `C:\Sources\Applications`, single DP `LAB01.lab.example`, collection folder `Deployment\Software` |
 
 `ins-avl-dev-ALLE APPS` from `globalDeployments` does not exist on L01 - the publish run skips
 it with a warning, which is the intended behaviour for a collection that is not there.
@@ -1030,7 +1030,7 @@ it with a warning, which is the intended behaviour for a collection that is not 
   mean a stale build there. The lab server is the git clone itself.
 * **Every commit raises the version** - `.githooks/pre-commit` bumps the last number in
   `VERSION` (since 2026-09-11, 1.1.x). Needs `git config core.hooksPath .githooks` once per clone.
-* When working on the server: **cm1 only**, never directly on CMSERVER.
+* When working on the server: **LAB01 only**, never directly on CMSERVER.
 * First publish run on a new site with `distributeContent: false` and
   `createDeployments: false` - that creates only the application and its deployment type and
   reaches no client. Switch them on afterwards, step by step.
