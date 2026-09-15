@@ -441,6 +441,13 @@ There is no separate metadata file - a package describes itself:
 | Description | `Notes` of the matching `Apps.csv` row, otherwise the name |
 | Detection | the `Apps.csv` row - rendered into clauses or a script at publish time |
 
+**Phases.** Six columns of the row go into the package's PSADT script, each as a tagged
+block at PSADT's own marker and rewritten on every build: `PreInstallCmd`, `InstallCmd`,
+`PostInstallCmd`, `PreUninstallCmd`, `UninstallCmd`, `PostUninstallCmd`. An empty column removes
+its block. The uninstall-previous block the tool generates sits in Pre-Install after the row's
+own code. Importing a package reads what stands in those sections into the row and wraps it,
+so a package built by hand or by an older tool is managed from then on.
+
 **MSI packages**: the tool writes `Start-ADTMsiProcess -Action Install -FilePath '<the MSI>'`
 into the Install block and the Uninstall counterpart into the Uninstall block; the row's
 command fields are ignored (the editor greys them out). The ProductCode for the detection is

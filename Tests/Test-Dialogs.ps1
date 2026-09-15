@@ -225,10 +225,22 @@ try {
         # control along, so counting types is not a stable check.
         $missing = @()
         foreach ($field in 'Publisher', 'Name', 'Version', 'DetectionMethod', 'DetectionPattern',
-                           'ProductCode', 'InstallCmd', 'UninstallCmd', 'Notes') {
+                           'ProductCode', 'InstallCmd', 'UninstallCmd', 'PreInstallCmd', 'PostUninstallCmd', 'Notes') {
             if (-not (Find-UiaElement -Root $editor -AutomationId $field -TimeoutSeconds 3)) { $missing += $field }
         }
-        Test-That 'the editor shows all nine columns' ($missing.Count -eq 0) "missing: $($missing -join ', ')"
+        Test-That 'the editor shows the columns' ($missing.Count -eq 0) "missing: $($missing -join ', ')"
+        # the two advanced phases hide behind their checkbox: not there, ticked, there
+        $toggle = Find-UiaElement -Root $editor -AutomationId 'AdvancedPhases' -TimeoutSeconds 3
+        Test-That 'the advanced-phases checkbox is present' ($null -ne $toggle)
+        $hidden = Find-UiaElement -Root $editor -AutomationId 'PostInstallCmd' -TimeoutSeconds 1
+        Test-That 'PostInstallCmd is hidden until the checkbox is ticked' ($null -eq $hidden -or $hidden.Current.IsOffscreen)
+        if ($toggle) {
+            Invoke-UiaToggle -Element $toggle
+            Start-Sleep -Milliseconds 500
+            $shown = Find-UiaElement -Root $editor -AutomationId 'PostInstallCmd' -TimeoutSeconds 3
+            Test-That 'PostInstallCmd appears once the checkbox is ticked' ($null -ne $shown -and -not $shown.Current.IsOffscreen)
+            Test-That 'PreUninstallCmd appears once the checkbox is ticked' ($null -ne (Find-UiaElement -Root $editor -AutomationId 'PreUninstallCmd' -TimeoutSeconds 3))
+        }
         Test-That 'DetectionMethod is a list' ((Find-UiaElement -Root $editor -AutomationId 'DetectionMethod' -TimeoutSeconds 3).Current.ControlType.ProgrammaticName -match 'ComboBox')
         Test-That 'DetectionPattern has a hint' ($null -ne (Find-UiaElement -Root $editor -AutomationId 'DetectionPatternHint' -TimeoutSeconds 3))
         foreach ($id in 'FromMsi', 'FromExe', 'FromWinget') {

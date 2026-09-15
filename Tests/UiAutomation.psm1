@@ -1,4 +1,4 @@
-﻿<#
+<#
     SCCMAppHelper - a small UI Automation driver for the WPF dialogs.
 
     Used by Test-Dialogs.ps1 to run the tool and operate it from a second
@@ -75,6 +75,11 @@ function Invoke-UiaElement {
     $Element.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
+function Invoke-UiaToggle {
+    param([Parameter(Mandatory = $true)]$Element)
+    $Element.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle()
+}
+
 function Set-UiaText {
     param(
         [Parameter(Mandatory = $true)]$Element,
@@ -120,4 +125,5 @@ function Select-UiaRow {
     return $null
 }
 
-Export-ModuleMember -Function Wait-UiaWindow, Find-UiaElement, Invoke-UiaElement, Set-UiaText, Get-UiaElement, Select-UiaRow
+Export-ModuleMember -Function Wait-UiaWindow, Find-UiaElement, Invoke-UiaElement, Invoke-UiaToggle, Set-UiaText, Get-UiaElement, Select-UiaRow
+

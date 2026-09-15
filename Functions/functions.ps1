@@ -388,9 +388,23 @@ $script:AppListColumns = @(
     'ProductCode'        # MSI detection
     'InstallCmd'         # optional PSADT code for the install section
     'UninstallCmd'       # optional PSADT code for the uninstall section
+    'PreInstallCmd'      # PSADT code before the install (after the tool's uninstall-previous block)
+    'PostInstallCmd'     # PSADT code after the install
+    'PreUninstallCmd'    # PSADT code before the uninstall
+    'PostUninstallCmd'   # PSADT code after the uninstall
     'UninstallPrevious'  # true: remove older versions in the pre-install section
     'Notes'
 )
+
+# The six phases the tool writes from a row, and the column each comes from.
+$script:PackagePhases = [ordered]@{
+    PreInstall    = 'PreInstallCmd'
+    Install       = 'InstallCmd'
+    PostInstall   = 'PostInstallCmd'
+    PreUninstall  = 'PreUninstallCmd'
+    Uninstall     = 'UninstallCmd'
+    PostUninstall = 'PostUninstallCmd'
+}
 
 <#
     What a column holds in a fresh record. One place, so the columns and their
@@ -988,13 +1002,68 @@ function Repair-CommandLine {
     draw the same three, so one table serves PSADT 3 and 4.
 #>
 function Get-PackageSectionMarker {
-    param([Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall')][string]$Section)
+    param([Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall', 'PostInstall', 'PreUninstall', 'PostUninstall', 'UninstallPrevious')][string]$Section)
 
     switch ($Section) {
-        'Install'    { return '## <Perform Installation tasks here>' }
-        'Uninstall'  { return '## <Perform Uninstallation tasks here>' }
-        'PreInstall' { return '## <Perform Pre-Installation tasks here>' }
+        'Install'           { return '## <Perform Installation tasks here>' }
+        'Uninstall'         { return '## <Perform Uninstallation tasks here>' }
+        'PreInstall'        { return '## <Perform Pre-Installation tasks here>' }
+        'PostInstall'       { return '## <Perform Post-Installation tasks here>' }
+        'PreUninstall'      { return '## <Perform Pre-Uninstallation tasks here>' }
+        'PostUninstall'     { return '## <Perform Post-Uninstallation tasks here>' }
+        'UninstallPrevious' { return '## <Perform Pre-Installation tasks here>' }   # the tool's own block, same section as PreInstall
     }
+}
+
+# A section ends at the next phase header, at the end of the function (Post-Uninstall
+# is followed by the closing brace) or at PSADT 3's phase variable.
+function Test-PackageSectionEnd {
+    param([string]$Line)
+    return ($Line -match '^\s*##\*?={5,}' -or $Line -match '^\s*## MARK:' -or $Line -match '^\s*\[String\]\$installPhase\s*=' -or $Line -match '^\}\s*$' -or $Line -match '^function\s')
+}
+
+<#
+    Until 2026-09-16 the tool's uninstall-previous block was tagged "PreInstall"; that tag now
+    belongs to the row's PreInstallCmd. A package built before gets its block re-tagged once,
+    recognised by the filter variable only that block carries.
+#>
+function Rename-UninstallPreviousTag {
+    param([Parameter(Mandatory = $true)][string]$FilePath)
+    if (-not (Test-Path -LiteralPath $FilePath)) { return }
+    $lines = @(Get-Content -LiteralPath $FilePath)
+    $b = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].Trim() -like '# --- SCCMAppHelper PreInstall begin*') { $b = $i; continue }
+        if ($b -ge 0 -and $lines[$i].Trim() -eq '# --- SCCMAppHelper PreInstall end ---') {
+            $inner = $lines[($b + 1)..($i - 1)] -join "`n"
+            if ($inner -match '\$previousFilter|\$versionFilter') {
+                $lines[$b] = $lines[$b].Replace('SCCMAppHelper PreInstall begin', 'SCCMAppHelper UninstallPrevious begin')
+                $lines[$i] = $lines[$i].Replace('SCCMAppHelper PreInstall end', 'SCCMAppHelper UninstallPrevious end')
+                Set-Content -LiteralPath $FilePath -Value $lines -Encoding UTF8
+            }
+            return
+        }
+    }
+}
+
+<#
+    The lines PSADT's own template puts after a marker - Post-Install carries the
+    "customize text" prompt, for example. They are not somebody's code and must not be
+    read into a row or thrown out of a section. The template travels with every
+    package (PSAppDeployToolkit\Frontend\v4).
+#>
+function Get-PackageTemplateSectionLines {
+    param([Parameter(Mandatory = $true)][string]$FilePath, [Parameter(Mandatory = $true)][string]$Section)
+    $template = Join-Path (Split-Path -Parent $FilePath) 'PSAppDeployToolkit\Frontend\v4\Invoke-AppDeployToolkit.ps1'
+    if (-not (Test-Path -LiteralPath $template)) { return @() }
+    $marker = Get-PackageSectionMarker -Section $Section
+    $found = @(); $inSection = $false
+    foreach ($line in @(Get-Content -LiteralPath $template)) {
+        if (-not $inSection) { if ($line -like "*$marker*") { $inSection = $true }; continue }
+        if (Test-PackageSectionEnd -Line $line) { break }
+        if ($line.Trim()) { $found += $line.Trim() }
+    }
+    return $found
 }
 
 <#
@@ -1009,24 +1078,34 @@ function Get-PackageSectionMarker {
 function Read-PackageCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall')][string]$Section
+        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall', 'PostInstall', 'PreUninstall', 'PostUninstall')][string]$Section,
+        # Leave out the lines inside any of this tool's blocks in the section (the
+        # uninstall-previous block shares Pre-Install with PreInstallCmd).
+        [switch]$OutsideToolBlocks
     )
 
     if (-not (Test-Path -LiteralPath $FilePath)) { return @() }
     $marker = Get-PackageSectionMarker -Section $Section
+    $templateLines = New-Object System.Collections.Generic.List[string]
+    foreach ($tl in @(Get-PackageTemplateSectionLines -FilePath $FilePath -Section $Section)) { $templateLines.Add($tl) }
 
     $lines = @(Get-Content -LiteralPath $FilePath)
     $found = @()
-    $inSection = $false
+    $inSection = $false; $inBlock = $false
     foreach ($line in $lines) {
         if (-not $inSection) {
             if ($line -like "*$marker*") { $inSection = $true }
             continue
         }
-        if ($line -match '^\s*##\*?={5,}' -or $line -match '^\s*## MARK:' -or $line -match '^\s*\[String\]\$installPhase\s*=') { break }
+        if (Test-PackageSectionEnd -Line $line) { break }
         $trimmed = $line.Trim()
         if (-not $trimmed) { continue }
-        if ($trimmed -like '# --- SCCMAppHelper * begin*' -or $trimmed -like '# --- SCCMAppHelper * end ---') { continue }
+        if ($trimmed -like '# --- SCCMAppHelper * begin*') { $inBlock = $true; continue }
+        if ($trimmed -like '# --- SCCMAppHelper * end ---') { $inBlock = $false; continue }
+        if ($inBlock -and $OutsideToolBlocks) { continue }
+        # the template's own line, at most once each
+        $ti = $templateLines.IndexOf($trimmed)
+        if ($ti -ge 0) { $templateLines.RemoveAt($ti); continue }
         $found += $trimmed
     }
     return $found
@@ -1035,7 +1114,7 @@ function Read-PackageCommand {
 function Set-PackageCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall')][string]$Section,
+        [Parameter(Mandatory = $true)][ValidateSet('Install', 'Uninstall', 'PreInstall', 'PostInstall', 'PreUninstall', 'PostUninstall', 'UninstallPrevious')][string]$Section,
         [string]$Command,
         # Importing a package built elsewhere: the lines somebody wrote by hand
         # were read into the row first, so they are replaced by the block that
@@ -1111,40 +1190,41 @@ function Set-PackageCommand {
     if ($markerAt -lt 0) { return 'no marker' }
     if (-not $Command)   { return 'nothing to write' }
 
-    # --- no block yet: only write when nobody put a command there by hand ---
-    # The guard protects an install command somebody wrote by hand, and it looks
-    # at the whole file. The pre-install block is generated rather than taken
-    # from a row, so a hand written install command elsewhere must not stop it.
+    # --- no block yet: only write when nobody put code there by hand ---
+    # What stands in the section outside this tool's blocks and outside PSADT's own
+    # template lines is somebody's code. The tool's own uninstall-previous block is
+    # generated, not taken from a row, so hand written code never stops it.
     $handWritten = @()
-    if ($Section -ne 'PreInstall') {
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            $inOurs = $false
-            foreach ($range in $ours) { if ($i -ge $range[0] -and $i -le $range[1]) { $inOurs = $true; break } }
-            if ($inOurs) { continue }
-            # The two Start-ADTMsiProcess lines of the stock template are not a
-            # command somebody wrote - they are the zero-config MSI path.
-            if ($lines[$i] -match '^\s*(Start-ADTProcess|Start-ADTMsiProcess|Execute-Process|Execute-MSI)\b' -and
-                $lines[$i] -notmatch 'ExecuteDefaultMSISplat|DefaultMspFiles') { $handWritten += $lines[$i].Trim() }
-        }
-    }
+    if ($Section -ne 'UninstallPrevious') { $handWritten = @(Read-PackageCommand -FilePath $FilePath -Section $Section -OutsideToolBlocks) }
     if ($handWritten.Count -gt 0) {
         if (-not $TakeOver) { return 'hand written' }
 
         # The section as it stands has to be exactly what the row says, or the
         # difference is reported rather than one of the two thrown away.
-        $current = @(Read-PackageCommand -FilePath $FilePath -Section $Section)
-        $wanted  = @($Command -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() })
-        if (($current -join "`n") -ne ($wanted -join "`n")) { return 'hand written' }
+        $wanted = @($Command -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() })
+        if (($handWritten -join "`n") -ne ($wanted -join "`n")) { return 'hand written' }
 
-        # Replace the section - marker to the next phase header - with the block.
+        # Take the hand written lines out of the section - each once; the template's
+        # own lines and other blocks stay - and put the block right after the marker.
         $endAt = $lines.Count
-        for ($i = $markerAt + 1; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match '^\s*##\*?={5,}' -or $lines[$i] -match '^\s*## MARK:' -or $lines[$i] -match '^\s*\[String\]\$installPhase\s*=') { $endAt = $i; break }
+        for ($i = $markerAt + 1; $i -lt $lines.Count; $i++) { if (Test-PackageSectionEnd -Line $lines[$i]) { $endAt = $i; break } }
+        $remove = New-Object System.Collections.Generic.List[string]
+        foreach ($h in $handWritten) { $remove.Add($h) }
+        $kept = @()
+        $inBlock = $false
+        for ($i = $markerAt + 1; $i -lt $endAt; $i++) {
+            $tr = $lines[$i].Trim()
+            if ($tr -like '# --- SCCMAppHelper * begin*') { $inBlock = $true }
+            $ri = -1
+            if (-not $inBlock) { $ri = $remove.IndexOf($tr) }
+            if ($ri -ge 0) { $remove.RemoveAt($ri); continue }
+            $kept += $lines[$i]
+            if ($tr -like '# --- SCCMAppHelper * end ---') { $inBlock = $false }
         }
         $new = @()
         $new += $lines[0..$markerAt]
         $new += $body
-        $new += ''
+        $new += $kept
         if ($endAt -lt $lines.Count) { $new += $lines[$endAt..($lines.Count - 1)] }
         Set-Content -LiteralPath $FilePath -Value $new -Encoding UTF8
         return 'taken over'
@@ -1532,10 +1612,13 @@ function New-AppPackage {
     # from the MSI in Files; the row's fields are ignored for it (the editor
     # greys them out).
     $adtScript = (Get-ADTScript -ContentRoot $contentPath).Path
-    foreach ($section in 'Install', 'Uninstall') {
-        $command = $(if ($section -eq 'Install') { $App.InstallCmd } else { $App.UninstallCmd })
-        if ($packageMsi) { $command = "Start-ADTMsiProcess -Action $section -FilePath '$($packageMsi.Name)'" }
-        switch (Set-PackageCommand -FilePath $adtScript -Section $section -Command $command -TakeOver) {
+    Rename-UninstallPreviousTag -FilePath $adtScript
+    foreach ($section in @($script:PackagePhases.Keys)) {
+        $column = $script:PackagePhases[$section]
+        $command = [string]$App.$column
+        if ($packageMsi -and $section -in 'Install', 'Uninstall') { $command = "Start-ADTMsiProcess -Action $section -FilePath '$($packageMsi.Name)'" }
+        $verbatim = ($section -notin 'Install', 'Uninstall')
+        switch (Set-PackageCommand -FilePath $adtScript -Section $section -Command $command -TakeOver -Verbatim:$verbatim) {
             'replaced'     { Write-Ok   "$section command updated from the app list." }
             'inserted'     { Write-Ok   "$section command written into the package." }
             'taken over'   { Write-Ok   "$section command taken over into the tool's block." }
@@ -1564,7 +1647,7 @@ function New-AppPackage {
     # The generated pre-install block. Switched off, the empty command removes
     # the block that is there - so unticking the box undoes it on the next build.
     $preInstall = Get-UninstallPreviousCommand -App $App -InstallerType $installerType
-    $preResult  = Set-PackageCommand -FilePath $adtScript -Section 'PreInstall' -Command $preInstall -Verbatim
+    $preResult  = Set-PackageCommand -FilePath $adtScript -Section 'UninstallPrevious' -Command $preInstall -Verbatim
 
     if (-not $preInstall) {
         if ($preResult -eq 'replaced') { Write-Ok 'Uninstall of previous versions removed from the package.' }
@@ -2215,10 +2298,11 @@ function Import-AppPackage {
 
     # The commands as they stand in the script go into the row, so the row
     # describes the package it names - and is editable from now on.
-    foreach ($section in 'Install', 'Uninstall') {
-        $column = "${section}Cmd"
+    Rename-UninstallPreviousTag -FilePath $adt.Path
+    foreach ($section in @($script:PackagePhases.Keys)) {
+        $column = $script:PackagePhases[$section]
         if ($app.$column) { continue }
-        $found = @(Read-PackageCommand -FilePath $adt.Path -Section $section)
+        $found = @(Read-PackageCommand -FilePath $adt.Path -Section $section -OutsideToolBlocks)
         if ($found.Count -gt 0) {
             $app.$column = ($found -join [Environment]::NewLine)
             Write-Info ("{0} command read from the script: {1} line(s)" -f $section, $found.Count)
@@ -2245,10 +2329,10 @@ function Import-AppPackage {
 
     # The hand written commands become the tool's block, so the row is the
     # source of truth from here on. Same lines, only wrapped.
-    foreach ($section in 'Install', 'Uninstall') {
-        $command = $app."${section}Cmd"
+    foreach ($section in @($script:PackagePhases.Keys)) {
+        $command = [string]$app.($script:PackagePhases[$section])
         if (-not $command) { continue }
-        switch (Set-PackageCommand -FilePath $adt.Path -Section $section -Command $command -TakeOver) {
+        switch (Set-PackageCommand -FilePath $adt.Path -Section $section -Command $command -TakeOver -Verbatim:($section -notin 'Install', 'Uninstall')) {
             'taken over'   { Write-Ok   "$section command taken over into the tool's block." }
             'inserted'     { Write-Ok   "$section command written into the package." }
             'hand written' { Write-Warn "The $section section differs from the row - left as it is." }

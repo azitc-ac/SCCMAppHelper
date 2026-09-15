@@ -596,7 +596,32 @@ function Open-EditDialog {
     if ($ReadOnly) { $keys = @() }
     $rowIndex = 0
 
+    $advancedKeys = @('PostInstallCmd', 'PreUninstallCmd')
+    $script:AdvancedControls = @()
+    $script:AdvancedToggle = $null
     foreach ($key in $keys) {
+        if ($key -eq $advancedKeys[0] -and -not $script:AdvancedToggle) {
+            # Post-Install and Pre-Uninstall are rarely needed: one checkbox shows them.
+            $rowDefinition = New-Object Windows.Controls.RowDefinition
+            $rowDefinition.Height = [Windows.GridLength]::Auto
+            $null = $fieldGrid.RowDefinitions.Add($rowDefinition)
+            $script:AdvancedToggle = New-Object Windows.Controls.CheckBox
+            $script:AdvancedToggle.Content = 'Advanced phases (Post-Install, Pre-Uninstall)'
+            $script:AdvancedToggle.Margin = '0,4,0,6'
+            $script:AdvancedToggle.IsChecked = (($advancedKeys | Where-Object { $item.Contains($_) -and ([string]$item[$_]).Trim() }).Count -gt 0)
+            [Windows.Automation.AutomationProperties]::SetAutomationId($script:AdvancedToggle, 'AdvancedPhases')
+            [Windows.Controls.Grid]::SetRow($script:AdvancedToggle, $rowIndex)
+            [Windows.Controls.Grid]::SetColumn($script:AdvancedToggle, 1)
+            $null = $fieldGrid.Children.Add($script:AdvancedToggle)
+            $rowIndex++
+            $syncAdvanced = {
+                $show = [bool]$script:AdvancedToggle.IsChecked
+                foreach ($c in $script:AdvancedControls) { $c.Visibility = $(if ($show) { 'Visible' } else { 'Collapsed' }) }
+            }
+            $script:AdvancedToggle.Add_Checked($syncAdvanced)
+            $script:AdvancedToggle.Add_Unchecked($syncAdvanced)
+        }
+
         $rowDefinition = New-Object Windows.Controls.RowDefinition
         $rowDefinition.Height = [Windows.GridLength]::Auto
         $null = $fieldGrid.RowDefinitions.Add($rowDefinition)
@@ -681,6 +706,19 @@ function Open-EditDialog {
 
         $textBoxes[$key] = $textBox
         $rowIndex++
+
+        if ($key -in $advancedKeys) {
+            $script:AdvancedControls += $label, $textBox
+            if (-not $script:AdvancedToggle.IsChecked) { $label.Visibility = 'Collapsed'; $textBox.Visibility = 'Collapsed' }
+        }
+        # a one-line tooltip per phase field
+        $phaseTips = @{
+            PreInstallCmd    = 'PSADT code that runs before the install - after the tool''s uninstall-previous block.'
+            PostInstallCmd   = 'PSADT code that runs after the install.'
+            PreUninstallCmd  = 'PSADT code that runs before the uninstall.'
+            PostUninstallCmd = 'PSADT code that runs after the uninstall (clean-up).'
+        }
+        if ($phaseTips.ContainsKey($key)) { $textBox.ToolTip = $phaseTips[$key] }
 
         # What DetectionPattern has to contain depends entirely on the method, so
         # the hint sits under the field and follows it.

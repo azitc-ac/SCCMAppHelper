@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-15 (AppScriptDate = build date on every build; EXE uninstallers in the pre-install block get their silent switch; MSI packages: explicit Start-ADTMsiProcess instead of zero-config - the 0x87D00324 on every MSI package rebuilt after a detection change; record editor tightened)
+Last updated: 2026-09-16 (all six PSADT phases are columns of the row - foreign packages can be imported whole; AppScriptDate = build date on every build; EXE uninstallers in the pre-install block get their silent switch; MSI packages: explicit Start-ADTMsiProcess instead of zero-config - the 0x87D00324 on every MSI package rebuilt after a detection change; record editor tightened)
 
 ## Where it stands
 
@@ -35,6 +35,35 @@ has been set, once per clone.
 Why: two installations - the lab server after `update.ps1`, a checkout being worked on -
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
+
+## All six phases are the row's (2026-09-16)
+
+Packages built by an earlier generation of the tool stayed "Published (foreign)" after an
+import because the tool only managed the Install and Uninstall sections; code in Pre-Install
+(Oracle's post-uninstall clean-up, hand written pre-install steps elsewhere) was left alone
+by the hand-written guard - kept, but invisible and unmanaged. Now:
+
+* Four new columns: `PreInstallCmd`, `PostInstallCmd`, `PreUninstallCmd`, `PostUninstallCmd`.
+  `Update-AppListSchema` adds them to an existing list on the next read.
+* Every build writes six tagged blocks at PSADT's markers (`## <Perform ... tasks here>`),
+  rewritten from the row each time; an empty column removes its block. The tool's own
+  uninstall-previous block is tagged `UninstallPrevious` now (it was `PreInstall`; a package
+  from before is re-tagged once, recognised by `$previousFilter`) and follows the row's
+  Pre-Install code.
+* Reading a section knows PSADT's own template lines (`PSAppDeployToolkit\Frontend\v4` travels
+  with every package): Post-Install's "customize text" prompt is neither read into a row nor
+  thrown out of a section. A section ends at the next phase header or the function's closing
+  brace - Post-Uninstall used to run into the Repair function.
+* Import reads all six sections into the row and takes them over: the hand written lines are
+  removed from the section, each once, and the block with the same lines put after the
+  marker. Publish then stamps the signature - the package is "Published (this tool)".
+* Editor: `PreInstallCmd` and `PostUninstallCmd` are always there; `PostInstallCmd` and
+  `PreUninstallCmd` sit behind the checkbox *Advanced phases*, ticked by itself when one of
+  them is filled. MSI rows keep Install/Uninstall greyed; the phases are free.
+* Checked on the lab Notepad++ package: six blocks, prompt kept, order in Pre-Install (row
+  code, then uninstall-previous), empty rebuild removes the four phase blocks, a foreign-style
+  copy with hand written Pre-Install and Post-Uninstall lines taken over cleanly, both scripts
+  parse. `Test-Dialogs.ps1 -SkipCatalog`: 42 of 42 (the advanced-phases checkbox included).
 
 ## AppScriptDate is the build date (2026-09-15, evening)
 
