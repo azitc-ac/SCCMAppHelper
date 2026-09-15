@@ -43,7 +43,10 @@ function Get-AppPackage {
 
         $contentPath = Get-PackageContentPath -PackageRoot $dir.FullName -Config $Config
         $adt         = Get-ADTScript -ContentRoot $contentPath
-        $parsed      = Split-AppFolderName -FolderName $dir.Name
+        $parsed      = Get-PackageIdentity -PackageRoot $dir.FullName -Config $Config
+        # managed = the tool's tagged blocks are in the script (built or imported by it)
+        $managed = $false
+        if ($adt) { try { $managed = ((Select-String -LiteralPath $adt.Path -Pattern '# --- SCCMAppHelper \w+ begin' -Quiet) -eq $true) } catch { } }
 
         # One walk of the package answers three questions at once: what Files\
         # holds - which decides whether the package can install anything - how
@@ -62,6 +65,7 @@ function Get-AppPackage {
             ContentPath  = $contentPath
             Toolkit      = $(if ($adt) { $adt.Toolkit } else { '' })
             IsLegacy     = (-not $adt)
+            IsManaged    = $managed
             FilesCount   = $scan.FilesCount
             LongestPath  = $scan.Longest
             OverlongFiles = $scan.Overlong
@@ -239,6 +243,7 @@ function Get-AppInventory {
             Definition     = '-'
             HasPackage     = $false
             IsLegacy       = $false
+            IsManaged      = $false
             Toolkit        = ''
             Package        = '-'
             PackageRoot    = ''
@@ -294,6 +299,7 @@ function Get-AppInventory {
         $row = $rows[$key]
         $row.HasPackage  = $true
         $row.IsLegacy    = $package.IsLegacy
+        $row.IsManaged   = $package.IsManaged
         $row.Toolkit     = $package.Toolkit
         $row.PackageRoot = $package.PackageRoot
         $row.ContentPath = $package.ContentPath
@@ -324,6 +330,23 @@ function Get-AppInventory {
                 # rows it is for: on the lab site two applications - one of them
                 # a customer package - were in the site, in no view, and in no
                 # count, with nothing saying so.
+                if (-not $rows.Contains($key) -and $entry.Location) {
+                    # Built by hand or by the predecessor tool: the folder is not named after
+                    # the application, but the deployment type's content location names the
+                    # folder. That package row becomes this application's row.
+                    $loc = ([string]$entry.Location).TrimEnd('\').ToLowerInvariant()
+                    $match = $rows.Values | Where-Object { $_.HasPackage -and -not $_.IsPublished -and $_.ContentPath } | Where-Object {
+                        $unc = ''; try { $unc = [string](ConvertTo-CMContentPath -Path $_.ContentPath -Config $Config) } catch { }
+                        $unc -and ($unc.TrimEnd('\').ToLowerInvariant() -eq $loc)
+                    } | Select-Object -First 1
+                    if ($match) {
+                        $oldKey = & $keyOf $match.Name $match.Version
+                        $match.Name = $parsed.Name; $match.Version = $parsed.Version
+                        $match.AppFullName = (Get-AppFullName -Name $parsed.Name -Version $parsed.Version)
+                        $rows.Remove($oldKey)
+                        $rows[$key] = $match
+                    }
+                }
                 if (-not $rows.Contains($key)) {
                     $rows[$key] = & $newRow $parsed.Name $parsed.Version
                     if ($entry.Publisher) { $rows[$key].Publisher = $entry.Publisher }
@@ -364,6 +387,7 @@ function Get-AppInventory {
         # needs doing is what is shown.
         $row.Status =
             if     ($row.IsLegacy)                                    { 'Legacy' }
+            elseif ($row.IsPublished -and $row.Origin -ne 'this tool' -and $row.IsManaged) { 'Imported, publish pending' }
             elseif ($row.IsPublished -and $row.Origin -ne 'this tool') { 'Foreign' }
             elseif ($row.OverlongFiles -gt 0)                          { 'Path too long' }
             elseif ($row.IsPublished -and -not $row.HasPackage)        { 'Published, no package' }
@@ -833,7 +857,7 @@ function Build-AppPackages {
                 if (-not $row.HasPackage -and $rows.Count -eq 1) { Open-PackageForEditing -PackageRoot $packageRoot -Config $Config }
             }
             elseif ($row.HasPackage) {
-                $null = Import-AppPackage -PackageRoot $row.PackageRoot -Bulk:($rows.Count -gt 1) -Config $Config
+                $null = Import-AppPackage -PackageRoot $row.PackageRoot -Name $row.Name -Version $row.Version -Bulk:($rows.Count -gt 1) -Config $Config
             }
             else {
                 Write-Warn ("[{0}] has neither a definition nor a package - nothing to build." -f $row.AppFullName)

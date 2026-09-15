@@ -152,6 +152,7 @@ function Show-InventoryDialog {
                         @('Published, no package', 'DarkOrange'),
                         @('No installer', 'DarkOrange'),
                         @('Definition only', 'Gray'),
+                        @('Imported, publish pending', 'DarkOrange'),
                         @('Foreign', 'Firebrick'),
                         @('Legacy', 'Firebrick'))) {
                     $trigger = New-Object Windows.DataTrigger

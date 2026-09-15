@@ -545,6 +545,7 @@ function Get-PackageContentPath {
 
     if (Get-ADTScript -ContentRoot (Join-Path $PackageRoot 'Content')) { return (Join-Path $PackageRoot 'Content') }
     if (Get-ADTScript -ContentRoot $PackageRoot)                       { return $PackageRoot }
+    if (Get-ADTScript -ContentRoot (Join-Path $PackageRoot 'in'))      { return (Join-Path $PackageRoot 'in') }   # the predecessor tool's layout
     if ($Config.packageLayout -eq 'Flat') { return $PackageRoot }
     return (Join-Path $PackageRoot 'Content')
 }
@@ -1236,6 +1237,26 @@ function Set-PackageCommand {
     if ($markerAt -lt $lines.Count - 1) { $new += $lines[($markerAt + 1)..($lines.Count - 1)] }
     Set-Content -LiteralPath $FilePath -Value $new -Encoding UTF8
     return 'inserted'
+}
+
+<#
+    Name and version of a package: the folder name when it follows "<Name> - <Version>",
+    else AppName / AppVersion from the PSADT script inside (a package built by hand or
+    by the predecessor tool, "Oracle_Database_Client-19cx64" with the script saying
+    Oracle_Database_Client 19c).
+#>
+function Get-PackageIdentity {
+    param([Parameter(Mandatory = $true)][string]$PackageRoot, $Config = (Get-ActiveConfig))
+    $parsed = Split-AppFolderName -FolderName (Split-Path -Leaf $PackageRoot)
+    if ($parsed.Version) { return $parsed }
+    try {
+        $content = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
+        if (Get-ADTScript -ContentRoot $content) {
+            $adt = Read-ADTMetadata -ContentRoot $content
+            if ($adt.Name -and $adt.Version) { return [pscustomobject]@{ Name = $adt.Name.Trim(); Version = $adt.Version.Trim() } }
+        }
+    } catch { }
+    return $parsed
 }
 
 <#
@@ -2156,7 +2177,7 @@ function Get-PackageMetadata {
     )
 
     $folderName  = Split-Path -Leaf $PackageRoot
-    $parsed      = Split-AppFolderName -FolderName $folderName
+    $parsed      = Get-PackageIdentity -PackageRoot $PackageRoot -Config $Config
     $contentPath = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
 
     $adt = Read-ADTMetadata -ContentRoot $contentPath
@@ -2255,11 +2276,16 @@ function Import-AppPackage {
     param(
         [Parameter(Mandatory = $true)][string]$PackageRoot,
         [switch]$Bulk,
+        # The application's name and version as the site knows them - a package that is
+        # already published keeps that identity, whatever its folder or script say.
+        [string]$Name = '',
+        [string]$Version = '',
         $Config = (Get-ActiveConfig)
     )
 
     $folderName = Split-Path -Leaf $PackageRoot
-    $parsed     = Split-AppFolderName -FolderName $folderName
+    $parsed     = Get-PackageIdentity -PackageRoot $PackageRoot -Config $Config
+    if ($Name -and $Version) { $parsed = [pscustomobject]@{ Name = $Name.Trim(); Version = $Version.Trim() } }
     $content    = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
 
     Write-Step "Importing existing package: $folderName"
@@ -2269,6 +2295,20 @@ function Import-AppPackage {
         throw "No PSADT script found in [$content] - this does not look like a package."
     }
     Write-Info "PSADT $($adt.Toolkit) package: $(Split-Path -Leaf $adt.Path)"
+
+    # The folder name is the naming convention the whole workflow rests on. A folder that
+    # does not follow it is renamed to "<Name> - <Version>" from the script's own metadata;
+    # the site's content location is set anew at the next publish anyway.
+    $wanted = Get-AppFullName -Name $parsed.Name -Version $parsed.Version
+    if ($parsed.Version -and $folderName -ne $wanted) {
+        $target = Join-Path (Split-Path -Parent $PackageRoot) $wanted
+        if (Test-Path -LiteralPath $target) { throw "Cannot rename [$folderName] to [$wanted] - that folder exists already." }
+        Move-Item -LiteralPath $PackageRoot -Destination $target
+        Write-Ok "Folder renamed to [$wanted] - the naming convention."
+        $PackageRoot = $target; $folderName = $wanted
+        $content = Get-PackageContentPath -PackageRoot $PackageRoot -Config $Config
+        $adt = Get-ADTScript -ContentRoot $content
+    }
 
     $existing = Get-PackageMetadata -PackageRoot $PackageRoot -Config $Config
     $row = Get-AppListRow -Name $parsed.Name -Version $parsed.Version
