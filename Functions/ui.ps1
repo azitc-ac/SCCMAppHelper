@@ -423,15 +423,36 @@ function Get-ExeProperties {
     for it.
 #>
 function Clear-CommandFields {
-    param([Parameter(Mandatory = $true)][hashtable]$TextBoxes)
-
+    # MSI package: the fields show the commands the tool writes into the package, greyed
+    # out; the row itself stays empty (the OK handler drops them again).
+    param([Parameter(Mandatory = $true)][hashtable]$TextBoxes, [string]$MsiName = '')
+    if (-not $MsiName) { $MsiName = '<the MSI in Files>' }
     foreach ($key in 'InstallCmd', 'UninstallCmd') {
         if (-not $TextBoxes.Contains($key)) { continue }
-        $TextBoxes[$key].Text = ''
+        $action = $(if ($key -eq 'InstallCmd') { 'Install' } else { 'Uninstall' })
+        $TextBoxes[$key].Text = "Start-ADTMsiProcess -Action $action -FilePath '$MsiName'"
         $TextBoxes[$key].IsEnabled = $false
         $TextBoxes[$key].Background = [System.Windows.Media.Brushes]::WhiteSmoke
-        $TextBoxes[$key].ToolTip = 'Written by the tool: Start-ADTMsiProcess with the MSI in Files.'
+        $TextBoxes[$key].ToolTip = 'Written by the tool on every build; msiexec runs with REBOOT=ReallySuppress /QN (PSADT config.psd1).'
     }
+}
+
+function Get-EditDialogMsiName {
+    # The MSI the package holds, or the one just picked with From MSI... / From winget.
+    param([hashtable]$TextBoxes)
+    try {
+        if ($script:EditDialogInstallerPath -and $script:EditDialogInstallerPath -match '\.msi$') { return (Split-Path -Leaf $script:EditDialogInstallerPath) }
+        $name = ''; $version = ''
+        if ($TextBoxes.Contains('Name'))    { $name    = ([string]$TextBoxes['Name'].Text).Trim() }
+        if ($TextBoxes.Contains('Version')) { $version = ([string]$TextBoxes['Version'].Text).Trim() }
+        if (-not $name -or -not $version) { return '' }
+        $config = Get-ActiveConfig
+        $packageRoot = Join-Path (Get-PackageWorkRoot -Config $config) (Get-AppFullName -Name $name -Version $version)
+        if (-not (Test-Path -LiteralPath $packageRoot)) { return '' }
+        $msi = Get-PackageMsi -ContentRoot (Get-PackageContentPath -PackageRoot $packageRoot -Config $config)
+        if ($msi) { return $msi.Name }
+    } catch { }
+    return ''
 }
 
 <#
@@ -743,7 +764,7 @@ function Open-EditDialog {
             $method = $textBoxes['DetectionMethod'].Text
             if ($method) { $method = $method.Trim() }
 
-            if ($method -eq 'MSI') { Clear-CommandFields -TextBoxes $textBoxes }
+            if ($method -eq 'MSI') { Clear-CommandFields -TextBoxes $textBoxes -MsiName (Get-EditDialogMsiName -TextBoxes $textBoxes) }
             else                   { Enable-CommandFields -TextBoxes $textBoxes }
 
             # ProductCode is never typed: From MSI... / From winget fill it. It only
@@ -810,7 +831,7 @@ function Open-EditDialog {
             $ofd.Title = 'Select MSI'
             $ofd.Filter = 'MSI files (*.msi)|*.msi|All files (*.*)|*.*'
             if ($ofd.ShowDialog() -eq $true -and $ofd.FileName) {
-                $script:EditDialogInstallerPath = $ofd.FileName
+                $script:EditDialogInstallerPath = $ofd.FileName; if ($syncMethod) { & $syncMethod }
                 $props = Get-MsiProperties -Path $ofd.FileName
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('Name', 'DisplayName', 'ProductName') -Value $props['ProductName']
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('Version', 'ProductVersion')           -Value $props['ProductVersion']
@@ -838,7 +859,7 @@ function Open-EditDialog {
             $ofd.Title = 'Select setup EXE'
             $ofd.Filter = 'Executables (*.exe)|*.exe|All files (*.*)|*.*'
             if ($ofd.ShowDialog() -eq $true -and $ofd.FileName) {
-                $script:EditDialogInstallerPath = $ofd.FileName
+                $script:EditDialogInstallerPath = $ofd.FileName; if ($syncMethod) { & $syncMethod }
                 $props = Get-ExeProperties -Path $ofd.FileName
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('Name', 'DisplayName', 'ProductName') -Value $props['ProductName']
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('Version', 'ProductVersion')           -Value $props['ProductVersion']
@@ -886,7 +907,7 @@ function Open-EditDialog {
         try {
             $found = Read-CatalogPackage
             if (-not $found) { return }
-            $script:EditDialogInstallerPath = $found.File
+            $script:EditDialogInstallerPath = $found.File; if ($syncMethod) { & $syncMethod }
 
             # Every field, empty ones included - Set-IfPresent skips blanks,
             # which is right for a partial prefill from a file the user picked
@@ -980,6 +1001,7 @@ function Open-EditDialog {
             $control = $textBoxes[$key]
             # A CSV carries strings, so a tick becomes "true".
             if ($control -is [Windows.Controls.CheckBox]) { $newItem[$key] = $(if ($control.IsChecked) { 'true' } else { 'false' }) }
+            elseif ($key -in 'InstallCmd', 'UninstallCmd' -and -not $control.IsEnabled) { $newItem[$key] = '' }   # shown for an MSI package, written by the build
             else { $newItem[$key] = $control.Text }
         }
         return $newItem
