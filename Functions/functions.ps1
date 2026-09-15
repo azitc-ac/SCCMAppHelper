@@ -879,17 +879,17 @@ function Set-ADTAppMetadata {
     $creationDate = Get-Date -Format 'yyyy-MM-dd'
     $script = Get-Content -LiteralPath $scriptPath
 
-    # Empty values are skipped, so a zero-config MSI package keeps its empty
-    # AppVendor / AppName / AppVersion while author and date are still stamped.
-    # Only empty fields are written - a package that already says who it is
-    # keeps saying so, whichever toolkit generation and whichever tool wrote it.
+    # Only empty fields are written - a package that already says who it is keeps
+    # saying so, whichever toolkit generation and whichever tool wrote it. Except the
+    # date: AppScriptDate is the date of the last build, so a package on a client or
+    # a site tells whether it was rebuilt since a fix. The author is stamped once.
     if ($adt.Toolkit -eq '4') {
         if ($Publisher) { $script = $script -replace "AppVendor = ''", "AppVendor = '$Publisher'" }
         if ($Name)      { $script = $script -replace "AppName = ''", "AppName = '$Name'" }
         if ($Version)   { $script = $script -replace "AppVersion = ''", "AppVersion = '$Version'" }
 
         $script = $script `
-            -replace "AppScriptDate = '2000-12-31'", "AppScriptDate = '$creationDate'" `
+            -replace "AppScriptDate = '[^']*'", "AppScriptDate = '$creationDate'" `
             -replace "AppScriptAuthor = '<author name>'", "AppScriptAuthor = '$Author'"
     }
     else {
@@ -899,7 +899,7 @@ function Set-ADTAppMetadata {
         if ($Version)   { $script = $script -replace "(?i)(\`$appVersion\s*=\s*)''", "`$1'$Version'" }
 
         $script = $script `
-            -replace "(?i)(\`$appScriptDate\s*=\s*)'(|XX/XX/20XX)'", "`$1'$creationDate'" `
+            -replace "(?i)(\`$appScriptDate\s*=\s*)'[^']*'", "`$1'$creationDate'" `
             -replace "(?i)(\`$appScriptAuthor\s*=\s*)'(|<author name>)'", "`$1'$Author'"
     }
 

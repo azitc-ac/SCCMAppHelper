@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-15 (EXE uninstallers in the pre-install block get their silent switch; MSI packages: explicit Start-ADTMsiProcess instead of zero-config - the 0x87D00324 on every MSI package rebuilt after a detection change; record editor tightened)
+Last updated: 2026-09-15 (AppScriptDate = build date on every build; EXE uninstallers in the pre-install block get their silent switch; MSI packages: explicit Start-ADTMsiProcess instead of zero-config - the 0x87D00324 on every MSI package rebuilt after a detection change; record editor tightened)
 
 ## Where it stands
 
@@ -35,6 +35,13 @@ has been set, once per clone.
 Why: two installations - the lab server after `update.ps1`, a checkout being worked on -
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
+
+## AppScriptDate is the build date (2026-09-15, evening)
+
+`AppScriptDate` was stamped once, on the first build, and never touched again - a package rebuilt
+after a fix looked like the old one. Now it is the date of the last build; the author stays as
+first stamped. The date is the quickest check on a client (PSADT log header) or in the package
+whether a rebuild reached it.
 
 ## The pre-install block ran EXE uninstallers without a silent switch (2026-09-15, evening)
 
