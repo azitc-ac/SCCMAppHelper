@@ -60,6 +60,9 @@ by the hand-written guard - kept, but invisible and unmanaged. Now:
 * Editor: `PreInstallCmd` and `PostUninstallCmd` are always there; `PostInstallCmd` and
   `PreUninstallCmd` sit behind the checkbox *Advanced phases*, ticked by itself when one of
   them is filled. MSI rows keep Install/Uninstall greyed; the phases are free.
+* The six command boxes start folded to one line; a click on the label (`▸ InstallCmd`) unfolds
+  the box to all of its lines (scrolls past 320 px), a second click folds it again. Six boxes of
+  six lines each made the dialog taller than a screen.
 * Checked on the lab Notepad++ package: six blocks, prompt kept, order in Pre-Install (row
   code, then uninstall-previous), empty rebuild removes the four phase blocks, a foreign-style
   copy with hand written Pre-Install and Post-Uninstall lines taken over cleanly, both scripts

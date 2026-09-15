@@ -1,5 +1,6 @@
 ﻿"Publisher";"Name";"Version";"DetectionMethod";"DetectionPattern";"ProductCode";"InstallCmd";"UninstallCmd";"PreInstallCmd";"PostInstallCmd";"PreUninstallCmd";"PostUninstallCmd";"UninstallPrevious";"Notes"
 "Igor Pavlov";"7-Zip";"26.02";"File";"%ProgramFiles%\7-Zip\7z.exe";"{23170F69-40C1-2702-2602-000001000000}";"Start-ADTProcess -FilePath '7z2602-x64.exe' -ArgumentList '/S' -WindowStyle 'Hidden'";"";"";"";"";"";"true";"7zip.7zip 26.02 from winget-pkgs (x64, wix)"
+"Microsoft Corporation";"Microsoft Office LTSC Standard 2021";"16.0.14332.21017";"Registry";"";"";"Start-ADTProcess -FilePath ""setup.exe"" -ArgumentList '/configure configuration-Office2021-x64.xml' -WindowStyle 'Hidden'";"";"";"";"";"";"false";""
 "Microsoft Corporation";"Microsoft SQL Server Management Studio";"22.9.2";"File";"C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\SSMS.exe";"";"$vswhere = ""${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe""
 $installPath = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release'
 $verb = if ((Test-Path $vswhere) -and (& $vswhere -products * -path $installPath -property installationVersion 2>$null)) { 'update' } else { 'install' }

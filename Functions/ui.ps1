@@ -633,10 +633,11 @@ function Open-EditDialog {
         $label = New-Object Windows.Controls.Label
         # A checkbox carries its own wording, so the column name beside it would
         # only say the same thing twice.
-        $label.Content = $(if ($isFlag) { '' } else { $key })
+        $label.Content = $(if ($isFlag) { '' } elseif ($isMultiline) { [string][char]0x25B8 + ' ' + $key } else { $key })
         $label.Margin = '0,0,8,6'
         $label.HorizontalAlignment = 'Left'
         $label.VerticalAlignment = $(if ($isMultiline) { 'Top' } else { 'Center' })
+        if ($isMultiline) { $label.Cursor = [System.Windows.Input.Cursors]::Hand; $label.ToolTip = 'Click to fold or unfold' }
         [Windows.Controls.Grid]::SetRow($label, $rowIndex)
         [Windows.Controls.Grid]::SetColumn($label, 0)
         $null = $fieldGrid.Children.Add($label)
@@ -690,7 +691,19 @@ function Open-EditDialog {
             $textBox = New-Object Windows.Controls.TextBox
             $textBox.AcceptsReturn = $isMultiline
             $textBox.TextWrapping = 'Wrap'
-            if ($isMultiline) { $textBox.Height = 100; $textBox.VerticalScrollBarVisibility = 'Auto' }
+            if ($isMultiline) {
+                # Folded: one line, no scrollbar - the label unfolds it to all of its lines
+                # (up to a limit, then it scrolls). Folded again when the label is clicked again.
+                $textBox.Height = 26; $textBox.VerticalScrollBarVisibility = 'Hidden'; $textBox.MaxHeight = 320
+                $textBox.Tag = 'folded'
+                $fold = {
+                    param($s, $e)
+                    $box = $textBoxes[$key]; $lbl = $s
+                    if ($box.Tag -eq 'folded') { $box.Height = [double]::NaN; $box.MinHeight = 26; $box.VerticalScrollBarVisibility = 'Auto'; $box.Tag = 'open'; $lbl.Content = [string][char]0x25BE + ' ' + $key }
+                    else { $box.Height = 26; $box.VerticalScrollBarVisibility = 'Hidden'; $box.Tag = 'folded'; $lbl.Content = [string][char]0x25B8 + ' ' + $key }
+                }.GetNewClosure()
+                $label.Add_MouseLeftButtonUp($fold)
+            }
             else { $textBox.Height = 26 }
         }
 
