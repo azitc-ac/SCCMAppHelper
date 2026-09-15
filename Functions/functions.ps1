@@ -1536,14 +1536,14 @@ function New-AppPackage {
         # PSADT uninstalls an MSI by itself (zero-config); an EXE it cannot. Without an
         # UninstallCmd the application's uninstall deployment type runs and removes nothing -
         # and supersedence, which uninstalls through exactly that, is silently toothless.
-        Write-Warn ("No UninstallCmd for an EXE package - the application's uninstall (and every supersedence that relies on it) removes nothing. Give the silent uninstall, e.g. Start-ADTProcess -FilePath `"`$envProgramFiles\{0}\Uninstall.exe`" -ArgumentList '/S'" -f $App.Name)
+        Write-Warn ("EXE package without UninstallCmd - uninstall and supersedence remove nothing. Example: Start-ADTProcess -FilePath `"`$envProgramFiles\{0}\Uninstall.exe`" -ArgumentList '/S'" -f $App.Name)
     }
     if (-not $packageMsi -and $App.ProductCode -and $App.DetectionMethod -in @('MSI', 'Registry') -and -not $App.DetectionPattern) {
         # The row came from a winget manifest that offers both installers: MSI metadata, EXE
         # in Files. The detection then looks for the MSI's uninstall key, which this package
         # never writes - and reports "installed" on every client that has the MSI by other
         # means, so the install (and the uninstall of previous versions) never runs.
-        Write-Warn ("ProductCode [{0}] is set but Files\ holds no MSI - this package installs an EXE. A detection built from the ProductCode looks for the MSI's key, which this package never writes. Set DetectionPattern to the uninstall key the EXE installer creates (its ARP key name) or switch to file detection." -f $App.ProductCode)
+        Write-Warn ("ProductCode [{0}] set, but no MSI in Files - the detection would look for the MSI's key, which this EXE never writes. Set DetectionPattern to the EXE's uninstall key name." -f $App.ProductCode)
     }
 
     # The generated pre-install block. Switched off, the empty command removes

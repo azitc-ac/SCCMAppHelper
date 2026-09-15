@@ -634,8 +634,10 @@ function Open-EditDialog {
         # value in an old row survives being looked at.
         if ($key -eq 'DetectionMethod') {
             $textBox = New-Object Windows.Controls.ComboBox
-            $textBox.IsEditable = $true
-            $textBox.ItemsSource = @('Registry', 'MSI', 'File', 'Script')
+            $textBox.IsEditable = $false
+            $methods = @('Registry', 'MSI', 'File', 'Script')
+            if ([string]$value -and $methods -notcontains [string]$value) { $methods += [string]$value }
+            $textBox.ItemsSource = $methods
             $textBox.Height = 26
         }
         else {
@@ -693,13 +695,13 @@ function Open-EditDialog {
             if ($textBoxes['UninstallPrevious'].IsChecked) {
                 $parsed = $null
                 if (-not $name.Trim() -or -not $version.Trim()) {
-                    $text = 'Name and version decide what gets uninstalled - fill both in.'
+                    $text = 'Fill in Name and Version.'
                 }
                 elseif (-not [System.Version]::TryParse($version.Trim(), [ref]$parsed)) {
-                    $text = "Version [$version] cannot be compared with others, so nothing is uninstalled - the block is skipped when the package is built."
+                    $text = "Version [$version] is not comparable - nothing is removed."
                 }
                 else {
-                    $text = "Searches the uninstall registry for '*{0}*' and removes every version below {1} before installing." -f
+                    $text = "Removes '*{0}*' below {1} before installing." -f
                             (Get-ProductSearchName -Name $name), $version.Trim()
                 }
             }
@@ -718,29 +720,24 @@ function Open-EditDialog {
     # are greyed out and say so rather than silently accepting something that
     # would install the product twice.
     if ($textBoxes.Contains('DetectionMethod')) {
-        # Each hint says two things: what belongs in the field, and what the tool
-        # builds out of it. The second half matters as much as the first - the
-        # rule that reaches ConfigMgr is assembled from this field, the Version
-        # column and nothing else, and none of that is visible here otherwise.
-        # Two lines each, and in this order: what to type here, then what
-        # ConfigMgr will check on the client. Anything the tool does in between -
-        # splitting a path, picking a registry view - is its own business and
-        # does not belong in a field hint.
+        # One short hint per method: what goes into the field, what ConfigMgr checks.
         $hints = @{
-            'Registry' = 'Type the uninstall key of the product, for example 7-Zip or {23170F69-40C1-2702-2602-000001000000}. A plain name is looked up under SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall; a value starting with SOFTWARE\ is used as the full path. Leave it empty to use the ProductCode of the MSI in .\Files.' + [Environment]::NewLine +
-                         'ConfigMgr then reads DisplayVersion from that key - in the 64 bit and in the 32 bit registry - and counts the application as installed from the version above upwards.'
-            'MSI'      = 'Nothing to type here. The ProductCode comes from the ProductCode field, or is read from the MSI in .\Files.' + [Environment]::NewLine +
-                         'ConfigMgr then asks Windows Installer for that product and counts the application as installed from the version above upwards.'
-            'File'     = 'Type the full path of a file the installation leaves behind. Environment variables are allowed, for example %ProgramFiles%\Notepad++\notepad++.exe.' + [Environment]::NewLine +
-                         'ConfigMgr then reads the file version and counts the application as installed from the version above upwards.'
-            'Script'   = 'Nothing to type here. The script comes from Content\SupportFiles\detection.ps1 in the package, and it travels with the content.' + [Environment]::NewLine +
-                         'ConfigMgr then runs that script on the client and counts the application as installed when the script writes something out.'
+            'Registry' = 'Key name under HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall, e.g. 7-Zip'
+            'MSI'      = 'Filled from the MSI in Files.'
+            'File'     = 'Full path of a file the installer creates, e.g. %ProgramFiles%\Notepad++\notepad++.exe'
+            'Script'   = 'Runs Content\SupportFiles\detection.ps1 from the package.'
+        }
+        $tips = @{
+            'Registry' = 'The product''s key name (or its {GUID}) under HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall - 64-bit and WOW6432Node are both checked. Find it in regedit or in the AZITC Toolkit, Software tab, column Key.' + [Environment]::NewLine + 'Installed = DisplayVersion of that key >= Version.'
+            'MSI'      = 'ConfigMgr asks Windows Installer for the ProductCode of the MSI in Files.' + [Environment]::NewLine + 'Installed = product registered with version >= Version.'
+            'File'     = 'Environment variables such as %ProgramFiles% are allowed; a 32-bit path is resolved as Program Files (x86) as well.' + [Environment]::NewLine + 'Installed = file version >= Version.'
+            'Script'   = 'The script travels with the content and runs on the client as SYSTEM.' + [Environment]::NewLine + 'Installed = the script writes any output (exit 0).'
         }
 
         # All three version rules compare against the Version field, so what
         # happens when there is nothing to compare has to be said once.
         $existenceNote = [Environment]::NewLine +
-                         'If the version above is not a version ConfigMgr can compare - "19c" for example - it only checks that the product is there at all.'
+                         'If Version is not comparable (e.g. 19c), only the presence is checked.'
 
         $syncMethod = {
             $method = $textBoxes['DetectionMethod'].Text
@@ -749,15 +746,26 @@ function Open-EditDialog {
             if ($method -eq 'MSI') { Clear-CommandFields -TextBoxes $textBoxes }
             else                   { Enable-CommandFields -TextBoxes $textBoxes }
 
-            $hint = ''
-            if ($hints.ContainsKey($method)) {
-                $hint = $hints[$method]
-                if ($method -ne 'Script') { $hint += $existenceNote }
+            # ProductCode is never typed: From MSI... / From winget fill it. It only
+            # matters for MSI detection, so it is greyed out for every other method.
+            if ($textBoxes.Contains('ProductCode')) {
+                $pc = $textBoxes['ProductCode']
+                $pc.IsReadOnly = $true
+                $pc.IsEnabled = ($method -eq 'MSI')
+                $pc.Background = $(if ($method -eq 'MSI') { [System.Windows.Media.Brushes]::WhiteSmoke } else { [System.Windows.Media.Brushes]::Gainsboro })
+                $pc.ToolTip = $(if ($method -eq 'MSI') { 'Filled by From MSI... - the product ConfigMgr asks Windows Installer for.' } else { 'Only used with MSI detection.' })
             }
 
-            if ($script:PatternHint) { $script:PatternHint.Text = $hint }
+            $hint = ''; $tip = ''
+            if ($hints.ContainsKey($method)) {
+                $hint = $hints[$method]
+                $tip = $tips[$method]
+                if ($method -ne 'Script') { $tip += $existenceNote }
+            }
+
+            if ($script:PatternHint) { $script:PatternHint.Text = $hint; $script:PatternHint.ToolTip = $(if ($tip) { $tip } else { $null }) }
             if ($textBoxes.Contains('DetectionPattern')) {
-                $textBoxes['DetectionPattern'].ToolTip = $(if ($hint) { $hint } else { $null })
+                $textBoxes['DetectionPattern'].ToolTip = $(if ($tip) { $tip } else { $null })
                 $textBoxes['DetectionPattern'].IsEnabled = ($method -notin 'MSI', 'Script')
 
                 # File detection needs an absolute path, and the start of it is
@@ -927,6 +935,18 @@ function Open-EditDialog {
                 $textBoxes['DetectionPattern'].CaretIndex = $textBoxes['DetectionPattern'].Text.Length
                 return
             }
+        }
+
+        # Registry detection without a key would fall back to the ProductCode - the
+        # MSI's key, which an EXE installer never writes. Not from this dialog.
+        if ($textBoxes.Contains('DetectionMethod') -and $textBoxes.Contains('DetectionPattern') -and
+            ([string]$textBoxes['DetectionMethod'].Text).Trim() -eq 'Registry' -and
+            -not ([string]$textBoxes['DetectionPattern'].Text).Trim()) {
+            $null = Show-MessageDialog -Caption 'Registry detection' -Buttons 'OK' -Icon 'Warning' -Owner $window -Text (
+                "DetectionPattern is empty.`n`nRegistry detection needs the product's key name under`nHKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall - e.g. 7-Zip.`n`n" +
+                'Find it in regedit, or in the AZITC Toolkit Software tab (column Key).')
+            $null = $textBoxes['DetectionPattern'].Focus()
+            return
         }
 
         $window.DialogResult = $true

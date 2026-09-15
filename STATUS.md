@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-14 (uninstall previous versions also removes the other installer kind; two build-time warnings)
+Last updated: 2026-09-15 (record editor: ProductCode read-only, DetectionMethod a fixed list, one-line hints with tooltips, Registry detection needs a key)
 
 ## Where it stands
 
@@ -36,6 +36,24 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
+## The record editor says less, and allows less (2026-09-15)
+
+The user's rule for every dialog: short text between the fields, the explanation in the
+tooltip, and no freedom where it only makes things harder.
+
+* `ProductCode` is read-only - `From MSI...` and `From winget` fill it, nobody types it - and
+  greyed out unless the detection is MSI, the only method that uses it.
+* `DetectionMethod` is a fixed list (an unknown value from an old row is added so it stays
+  selectable), not an editable combo box.
+* The hint under `DetectionPattern` is one line per method ("Key name under
+  HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall, e.g. 7-Zip"); what ConfigMgr
+  checks, where to find the key (regedit, or the AZITC Toolkit's Software tab, column Key) and
+  the non-comparable-version note moved into the tooltip of the field and the hint.
+* Registry detection with an empty `DetectionPattern` is refused by OK. That was the road to
+  the ProductCode fallback - the MSI's key, which an EXE installer never writes (7-Zip,
+  Notepad++ on the lab client). The fallback stays in the generator for rows edited by hand.
+* The two build-time warnings of 2026-09-14 are one sentence each now.
+* `Test-Dialogs.ps1 -SkipCatalog`: 38 of 38.
 ## Two installers of one product (2026-09-14)
 
 A customer client had `7-Zip 26.01 (x64)` (the EXE installer, key `7-Zip`) and
