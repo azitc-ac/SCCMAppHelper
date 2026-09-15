@@ -1261,7 +1261,19 @@ foreach ($component in $components) {
         # MSI first: msiexec removes its own files cleanly. An EXE uninstaller run first
         # would empty the shared folder and leave the MSI registration behind as a leftover.
         Uninstall-ADTApplication -Name $component.Name -ApplicationType MSI -FilterScript $previousFilter
-        Uninstall-ADTApplication -Name $component.Name -ApplicationType EXE -FilterScript $previousFilter
+        # An EXE uninstaller runs interactive unless told otherwise, and under SYSTEM nobody
+        # can click - it would hang until the deployment's timeout. The silent switch depends
+        # on the setup engine; PSADT prefers a QuietUninstallString when the entry has one.
+        $exeEntries = @($found | Where-Object { -not (($_.WindowsInstaller -eq 1) -or ($_.WindowsInstaller -eq $true)) })
+        foreach ($silent in @($exeEntries | ForEach-Object {
+                    switch -Regex ([string]$_.UninstallString) {
+                        'unins\d*\.exe'                                  { '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' }   # Inno Setup
+                        '/[Ii]\{|InstallShield|setup\.exe.*-runfromtemp' { '/s' }                                        # InstallShield
+                        default                                          { '/S' }                                        # NSIS, 7-Zip, most others
+                    }
+                } | Select-Object -Unique)) {
+            Uninstall-ADTApplication -Name $component.Name -ApplicationType EXE -FilterScript $previousFilter -AdditionalArgumentList $silent
+        }
         Write-ADTLogEntry -Message "Uninstall of '$($component.Name)' complete."
     } else {
         Write-ADTLogEntry -Message "Component '$($component.Name)' not found or already current - skipping."

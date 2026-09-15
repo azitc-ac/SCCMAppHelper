@@ -4,7 +4,7 @@ Working document for picking the project up again - in a new session, on another
 after a break. `README.md` describes how the tool works; this file records **where it stands,
 what has actually been tested, and which decisions are already settled**.
 
-Last updated: 2026-09-15 (MSI packages: explicit Start-ADTMsiProcess instead of zero-config - the 0x87D00324 on every MSI package rebuilt after a detection change; record editor tightened)
+Last updated: 2026-09-15 (EXE uninstallers in the pre-install block get their silent switch; MSI packages: explicit Start-ADTMsiProcess instead of zero-config - the 0x87D00324 on every MSI package rebuilt after a detection change; record editor tightened)
 
 ## Where it stands
 
@@ -35,6 +35,16 @@ has been set, once per clone.
 Why: two installations - the lab server after `update.ps1`, a checkout being worked on -
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
+
+## The pre-install block ran EXE uninstallers without a silent switch (2026-09-15, evening)
+
+Bug, found reading the generated block: `Uninstall-ADTApplication -ApplicationType EXE` without arguments
+runs the entry's UninstallString as it is - 7-Zip's `Uninstall.exe` then shows a dialog that nobody
+in session 0 can click, and the install waits for the deployment timeout. PSADT uses a
+QuietUninstallString when the entry has one; 7-Zip has none. The block now passes
+`-AdditionalArgumentList` by setup engine: Inno (`unins*.exe`) `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`,
+InstallShield `/s`, everything else `/S` (NSIS, 7-Zip). One call per switch found. Rebuild every
+package with "uninstall previous versions" ticked.
 
 ## MSI packages installed nothing (2026-09-15, evening)
 
