@@ -132,7 +132,7 @@ The buttons follow the state of the selected rows:
 | **Add...** | A new application, from **winget**, from an **installer file**, or as a **blank record** - see below |
 | **New version...** | The selected application in a newer version: resolved from winget again, or from a file, with the detection somebody already worked out carried over |
 | **Edit** | Opens the application: the facts on top, the definition below. A package that exists is rebuilt from the edited row, so the row stays the source of truth |
-| **Delete definition** | Removes the row from `Apps.csv` - the package folder and the application stay |
+| **Delete definition** | Deletes a version that is not published: the row in `Apps.csv` and the package folder on the share. A published version is left alone here - Retire > Remove deletes it in the right order |
 | **Build package** | Creates the package on the share from the definition, or takes over a package folder the list does not know |
 | **Publish** | Creates or updates the ConfigMgr application: deployment type, detection, content, collections, deployments, supersedence. A row without a package is built first |
 | **Retire...** | **Retire** stops deploying a version and keeps everything else; **Remove** deletes the version completely: application, collections, content, package folder, `Apps.csv` row. The list can be filtered to versions a newer one has replaced |

@@ -284,7 +284,7 @@ function Show-InventoryDialog {
     $addButton     = & $newButton 'Add...'              'Add'        'Add an application: from winget, from an installer file, or a blank record' $right
     $versionButton = & $newButton 'New version...'      'NewVersion' 'The selected application in a newer version - resolved from winget, or from a file' $right
     $editButton    = & $newButton 'Edit'                'Edit'       'Edit the definition; a package that exists is rebuilt from it' $right
-    $deleteButton  = & $newButton 'Delete definition'   'Delete'     'Remove the row from Apps.csv - the package and the application stay' $right
+    $deleteButton  = & $newButton 'Delete definition'   'Delete'     'Delete the definition and the package folder of a version that is not published; published versions: Retire > Remove' $right
     $buildButton   = & $newButton 'Build package'       'Build'      'Create or refresh the package on the share from the definition' $right
     $publishButton = & $newButton 'Publish'             'Publish'    'Create or update the application in ConfigMgr: deployment type, content, collections, deployments, supersedence' $right
     $retireButton  = & $newButton 'Retire...'           'Retire'     'Stop deploying a version, or delete it and everything that belongs to it' $right

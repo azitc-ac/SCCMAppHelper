@@ -53,7 +53,7 @@ collections, application, then the package folder (by the "<Name> - <Version>" c
 the Apps.csv row, the row last and only once the application is gone - a row without an
 application reads as "ready to publish" and would bring the version straight back. The "delete
 the package folder as well" checkbox is gone; Retire keeps everything, Remove keeps nothing, the
-plan text names every object before the confirmation.
+plan text names every object before the confirmation. Delete definition, the same evening: "nach delete definition taucht die app immer noch auf" - the folder stayed and the row came back as "Imported". Now it deletes the row and the folder of an unpublished version, also a folder-only row, and refuses a published one with a pointer to Retire > Remove.
 
 
 The user: PSADT has a cmdlet that runs the product's uninstall string and makes it silent -

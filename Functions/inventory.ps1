@@ -937,21 +937,40 @@ function Edit-AppDefinition {
 function Remove-AppDefinition {
     param([Parameter(Mandatory = $true)]$InventoryRows)
 
-    $rows = @($InventoryRows | Where-Object { $_.HasDefinition })
+    # a row with a definition, or a folder the list only knows from the share
+    $rows = @($InventoryRows | Where-Object { $_.HasDefinition -or $_.HasPackage })
     if ($rows.Count -eq 0) {
-        $null = Show-MessageDialog -Text 'None of the selected rows has a definition in Apps.csv.' -Caption 'Delete definition' -Buttons 'OK' -Icon 'Information'
+        $null = Show-MessageDialog -Text 'None of the selected rows has a definition in Apps.csv or a package folder.' -Caption 'Delete definition' -Buttons 'OK' -Icon 'Information'
         return
     }
 
-    $withPackage = @($rows | Where-Object { $_.HasPackage -or $_.IsPublished }).Count
-    $text = "Delete {0} definition(s) from Apps.csv?`n`n{1}" -f $rows.Count, (($rows | ForEach-Object { $_.AppFullName }) -join [Environment]::NewLine)
-    if ($withPackage -gt 0) {
-        $text += "`n`n{0} of them have a package or an application. Those stay - only the row goes, and the package would be imported again on the next publish." -f $withPackage
+    # A row is one of three things the list joins; deleting only the row left
+    # the package folder, and the application kept showing up as "Imported" -
+    # "nach delete definition taucht die app immer noch auf". So Delete takes
+    # the package folder with it, and a version that is published in the site
+    # is not touched here at all: that is Retire > Remove, which takes the
+    # application, the folder and the row apart in the right order.
+    $published = @($rows | Where-Object { $_.IsPublished })
+    $deletable = @($rows | Where-Object { -not $_.IsPublished })
+    if ($deletable.Count -eq 0) {
+        $null = Show-MessageDialog -Text ("Published in the site - use Retire > Remove to delete the version completely:`n`n{0}" -f (($published | ForEach-Object { $_.AppFullName }) -join [Environment]::NewLine)) -Caption 'Delete definition' -Buttons 'OK' -Icon 'Information'
+        return
+    }
+    $lines = @($deletable | ForEach-Object { $_.AppFullName + $(if ($_.HasPackage) { '   + folder ' + $_.PackageRoot } else { '' }) })
+    $text = "Delete {0} definition(s) from Apps.csv?`n`n{1}" -f $deletable.Count, ($lines -join [Environment]::NewLine)
+    if ($published.Count -gt 0) {
+        $text += "`n`nNot touched, published in the site (Retire > Remove deletes those):`n{0}" -f (($published | ForEach-Object { $_.AppFullName }) -join [Environment]::NewLine)
     }
     $answer = Show-MessageDialog -Text $text -Caption 'Delete definition' -Buttons 'YesNo' -Icon 'Warning'
     if ($answer -ne 'Yes') { Write-Info 'Cancelled.'; return }
 
-    foreach ($row in $rows) { Remove-AppListRow -Name $row.Name -Version $row.Version }
+    foreach ($row in $deletable) {
+        if ($row.HasPackage -and $row.PackageRoot -and (Test-Path -LiteralPath $row.PackageRoot)) {
+            try { Remove-Item -LiteralPath $row.PackageRoot -Recurse -Force -ErrorAction Stop; Write-Ok ("Folder deleted: {0}" -f $row.PackageRoot) }
+            catch { Write-Fail ("Folder {0}: {1}" -f $row.PackageRoot, $_.Exception.Message); continue }
+        }
+        if ($row.HasDefinition) { Remove-AppListRow -Name $row.Name -Version $row.Version }
+    }
 }
 
 <#
