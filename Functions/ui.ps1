@@ -813,7 +813,12 @@ function Open-EditDialog {
                          'If Version is not comparable (e.g. 19c), only the presence is checked.'
 
         $syncMethod = {
-            $method = $textBoxes['DetectionMethod'].Text
+            # SelectedItem, not Text: inside SelectionChanged the Text of a
+            # ComboBox still holds the previous pick, and the hint under the
+            # pattern field then described the method just left ("ich stelle
+            # auf File und dann kommt ein Hinweis zu Registry").
+            $method = [string]$textBoxes['DetectionMethod'].SelectedItem
+            if (-not $method) { $method = [string]$textBoxes['DetectionMethod'].Text }
             if ($method) { $method = $method.Trim() }
 
             if ($method -eq 'MSI') { Clear-CommandFields -TextBoxes $textBoxes -MsiName (Get-EditDialogMsiName -TextBoxes $textBoxes) }

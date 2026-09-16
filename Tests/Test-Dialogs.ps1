@@ -243,6 +243,18 @@ try {
         }
         Test-That 'DetectionMethod is a list' ((Find-UiaElement -Root $editor -AutomationId 'DetectionMethod' -TimeoutSeconds 3).Current.ControlType.ProgrammaticName -match 'ComboBox')
         Test-That 'DetectionPattern has a hint' ($null -ne (Find-UiaElement -Root $editor -AutomationId 'DetectionPatternHint' -TimeoutSeconds 3))
+        # The hint follows the pick at once - SelectionChanged fires before the
+        # ComboBox's Text catches up, which once left the Registry hint under a
+        # File pattern.
+        $methodBox = Find-UiaElement -Root $editor -AutomationId 'DetectionMethod' -TimeoutSeconds 3
+        $methodBox.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+        Start-Sleep -Milliseconds 300
+        $fileItem = $methodBox.FindFirst([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, 'File')))
+        if ($fileItem) { $fileItem.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select() }
+        $methodBox.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse()
+        Start-Sleep -Milliseconds 300
+        $hintText = [string](Find-UiaElement -Root $editor -AutomationId 'DetectionPatternHint' -TimeoutSeconds 3).Current.Name
+        Test-That 'the hint follows the method (File)' ($hintText -match '(?i)path|file' -and $hintText -notmatch '(?i)uninstall key') "hint: [$hintText]"
         foreach ($id in 'FromMsi', 'FromExe', 'FromWinget') {
             Test-That "prefill button [$id] is present" ($null -ne (Find-UiaElement -Root $editor -AutomationId $id -TimeoutSeconds 3))
         }
