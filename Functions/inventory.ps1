@@ -567,6 +567,18 @@ function Set-AppListRow {
     else           { Write-Ok ("Added to the app list: {0} - {1}" -f $App.Name, $App.Version) }
 }
 
+function Test-AppListRow {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Version,
+        [string]$CsvPath = (Join-Path $rootDir 'Apps.csv')
+    )
+
+    if (-not (Test-Path -LiteralPath $CsvPath)) { return $false }
+    $rows = @(Import-Csv -LiteralPath $CsvPath -Delimiter ';')
+    return (@($rows | Where-Object { $_.Name.Trim() -eq $Name.Trim() -and ([string]$_.Version).Trim() -eq $Version.Trim() }).Count -gt 0)
+}
+
 function Remove-AppListRow {
     param(
         [Parameter(Mandatory = $true)][string]$Name,

@@ -135,7 +135,7 @@ The buttons follow the state of the selected rows:
 | **Delete definition** | Removes the row from `Apps.csv` - the package folder and the application stay |
 | **Build package** | Creates the package on the share from the definition, or takes over a package folder the list does not know |
 | **Publish** | Creates or updates the ConfigMgr application: deployment type, detection, content, collections, deployments, supersedence. A row without a package is built first |
-| **Retire...** | Stops deploying a version, or deletes it and everything that belongs to it |
+| **Retire...** | **Retire** stops deploying a version and keeps everything else; **Remove** deletes the version completely: application, collections, content, package folder, `Apps.csv` row. The list can be filtered to versions a newer one has replaced |
 | **Open folder** | The package folder of the selected row, or the share |
 | **Tools...** | Collection maintenance and site setup |
 

@@ -36,7 +36,25 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
-## The uninstall command of an EXE package is filled in (2026-09-16, night)
+## Retire reads in 5 s instead of 34, and Remove removes everything (2026-09-16, night)
+
+`Get-CMApplicationInventory` asked the provider twice per application - `Get-CMApplicationDeployment
+-Name` and `Get-CMDeviceCollection -Name` per owned pattern - and parsed every package XML into a
+DOM, then matched every application's 40 KB of XML against every other: 34.5 s for 22
+applications on the lab site. Now: `SMS_ApplicationAssignment` once (application and collection
+name of every deployment), `SMS_Collection` once per owned-pattern prefix (`ins-req-dev-%`), the
+logical name and the `Application_<guid>` references of each XML by regex into sets, and the
+"superseded by" question is a set lookup. 4.7 s, same rows (the two applications that differed
+between the runs the user had retired in between - the tool's own log says so).
+
+"Ich wÃ¼rde gerne aus dem Tool alte Versionen lÃ¶schen kÃ¶nnen, die nicht deployed sind. Ganz weg,
+auch aus Apps.csv." Remove now is that: deployments, supersedence references, content,
+collections, application, then the package folder (by the "<Name> - <Version>" convention) and
+the Apps.csv row, the row last and only once the application is gone - a row without an
+application reads as "ready to publish" and would bring the version straight back. The "delete
+the package folder as well" checkbox is gone; Retire keeps everything, Remove keeps nothing, the
+plan text names every object before the confirmation.
+
 
 The user: PSADT has a cmdlet that runs the product's uninstall string and makes it silent -
 `Uninstall-ADTApplication -Name '7-Zip'` - fill that in when a row is defined or edited. Done,

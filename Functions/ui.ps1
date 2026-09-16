@@ -1696,7 +1696,7 @@ function Show-CatalogDialog {
     long gone still has to be reachable. "Only replaced versions" is the
     everyday case - a version that has a newer sibling in the site.
 
-    Returns Applications / Level / DeletePackageFolder, or $null when cancelled.
+    Returns Applications / Level, or $null when cancelled.
 #>
 function Show-RetireDialog {
     param($Inventory, [string]$Title = 'Retire applications')
@@ -1753,12 +1753,12 @@ function Show-RetireDialog {
     $filterBox.Add_Checked($applyFilter)
     $filterBox.Add_Unchecked($applyFilter)
 
-    $folderBox = New-Object Windows.Controls.CheckBox
-    $folderBox.Content = 'Remove: delete the package folder on the share as well'
-    $folderBox.Margin = '0,10,0,0'
-    [Windows.Automation.AutomationProperties]::SetAutomationId($folderBox, 'DeletePackageFolder')
-    [Windows.Controls.Grid]::SetRow($folderBox, 2)
-    $null = $grid.Children.Add($folderBox)
+    $note = New-Object Windows.Controls.TextBlock
+    $note.Text = 'Retire removes the deployments and keeps everything else. Remove deletes the version: application, collections, content, package folder, Apps.csv row.'
+    $note.TextWrapping = 'Wrap'
+    $note.Margin = '0,10,0,0'
+    [Windows.Controls.Grid]::SetRow($note, 2)
+    $null = $grid.Children.Add($note)
 
     $buttons = New-Object Windows.Controls.StackPanel
     $buttons.Orientation = 'Horizontal'
@@ -1794,9 +1794,8 @@ function Show-RetireDialog {
             return
         }
         $window.Tag = [pscustomobject]@{
-            Applications        = $selected
-            Level               = $level
-            DeletePackageFolder = [bool]$folderBox.IsChecked
+            Applications = $selected
+            Level        = $level
         }
         $window.Close()
     }

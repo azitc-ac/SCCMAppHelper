@@ -10,7 +10,11 @@
 
         Remove  does that and then takes the rest apart: supersedence
                 references, content on the distribution points, the two
-                per-application collections, and finally the application.
+                per-application collections, the application, the package
+                folder on the share and the row in Apps.csv - the version is
+                gone from all three places the tool keeps in step. (Until
+                2026-09-16 the folder was a checkbox and the row was never
+                touched; the user wanted old versions gone, not half gone.)
 
     Two rules the code keeps throughout:
 
@@ -45,17 +49,47 @@ function Get-CMApplicationInventory {
     # The block returns its result rather than appending to a variable outside
     # it: a scriptblock run with & cannot assign to the caller's variables, it
     # only ever gets a copy. Mutating a hashtable works, "+=" does not.
+    # Deployments and collections come from two provider queries for the whole
+    # site, not from two cmdlets per application: Get-CMApplicationDeployment
+    # -Name and Get-CMDeviceCollection -Name cost about a second each, and with
+    # 22 applications the list took 34 s to read. SMS_ApplicationAssignment
+    # carries the collection name of every deployment; SMS_Collection is asked
+    # once for every name the owned patterns can produce (their fixed prefix).
+    $namespace = 'root\SMS\site_{0}' -f $Config.siteCode
+    $assignmentsByApp = @{}
+    try {
+        foreach ($a in @(Get-WmiObject -Namespace $namespace -ComputerName $Config.siteServer -Query 'SELECT ApplicationName, CollectionName FROM SMS_ApplicationAssignment' -ErrorAction Stop)) {
+            $n = [string]$a.ApplicationName
+            if (-not $assignmentsByApp.ContainsKey($n)) { $assignmentsByApp[$n] = @() }
+            $assignmentsByApp[$n] += [string]$a.CollectionName
+        }
+    }
+    catch { Write-Warn ("Could not read the deployments: {0}" -f $_.Exception.Message) }
+    $collectionNames = @{}
+    foreach ($pattern in $ownedPatterns) {
+        $prefix = ($pattern -split '\{App\}')[0]
+        try {
+            foreach ($c in @(Get-WmiObject -Namespace $namespace -ComputerName $Config.siteServer -Query ("SELECT Name FROM SMS_Collection WHERE Name LIKE '{0}%'" -f ($prefix -replace "'", "''")) -ErrorAction Stop)) { $collectionNames[([string]$c.Name).ToLower()] = $true }
+        }
+        catch { Write-Warn ("Could not read the collections: {0}" -f $_.Exception.Message) }
+    }
+
     $inventory = Invoke-InCMSite -Config $Config -ScriptBlock {
         $rows = @()
         $applications = @(Get-CMApplication)
 
-        # An application that supersedes another names it in its own package
-        # XML, so one pass over everything gives the referrers of everything.
-        $logicalNames = @{}
+        # An application that supersedes another names the other's logical
+        # name in its own package XML. One pass collects, per application,
+        # its own logical name and every Application_<guid> it refers to; the
+        # referrers of an application are then a set lookup, not a regex over
+        # every other application's 40 KB of XML.
+        $logicalNames = @{}; $references = @{}
         foreach ($application in $applications) {
-            $xml = [xml]$application.SDMPackageXML
-            $node = $xml.SelectSingleNode('//*[local-name()="AppMgmtDigest"]/*[local-name()="Application"]')
-            if ($node) { $logicalNames[$application.LocalizedDisplayName] = $node.LogicalName }
+            $xml = [string]$application.SDMPackageXML
+            if ($xml -match '<Application\b[^>]*\bLogicalName="(?<name>Application_[^"]+)"') { $logicalNames[$application.LocalizedDisplayName] = $Matches['name'] }
+            $set = @{}
+            foreach ($m in [regex]::Matches($xml, 'Application_[0-9a-fA-F-]{36}')) { $set[$m.Value] = $true }
+            $references[$application.LocalizedDisplayName] = $set
         }
 
         foreach ($application in $applications) {
@@ -66,24 +100,25 @@ function Get-CMApplicationInventory {
             if ($logical) {
                 foreach ($other in $applications) {
                     if ($other.LocalizedDisplayName -eq $displayName) { continue }
-                    if ($other.SDMPackageXML -match [regex]::Escape($logical)) { $supersededBy += $other.LocalizedDisplayName }
+                    if ($references[$other.LocalizedDisplayName].ContainsKey($logical)) { $supersededBy += $other.LocalizedDisplayName }
                 }
             }
 
-            $deployments = @(Get-CMApplicationDeployment -Name $displayName -ErrorAction SilentlyContinue)
+            $deploymentCollections = @()
+            if ($assignmentsByApp.ContainsKey($displayName)) { $deploymentCollections = @($assignmentsByApp[$displayName]) }
 
             $owned = @()
             foreach ($pattern in $ownedPatterns) {
                 $collectionName = $pattern.Replace('{App}', $displayName)
-                if (Get-CMDeviceCollection -Name $collectionName -ErrorAction SilentlyContinue) { $owned += $collectionName }
+                if ($collectionNames.ContainsKey($collectionName.ToLower())) { $owned += $collectionName }
             }
 
             $rows += [pscustomobject]@{
                 AppName          = $displayName
                 Name             = $application.LocalizedDisplayName
                 Version          = [string]$application.SoftwareVersion
-                Deployments      = $deployments.Count
-                Collections      = @($deployments | ForEach-Object { $_.CollectionName })
+                Deployments      = $deploymentCollections.Count
+                Collections      = $deploymentCollections
                 OwnedCollections = $owned
                 SupersededBy     = $supersededBy
                 Origin           = $(if ($application.SDMPackageXML -match $signature) { 'this tool' } else { 'foreign' })
@@ -136,7 +171,6 @@ function Get-RetirePlan {
     param(
         [Parameter(Mandatory = $true)]$Applications,
         [ValidateSet('Retire', 'Remove')][string]$Level = 'Retire',
-        [switch]$DeletePackageFolder,
         $Config = (Get-ActiveConfig)
     )
 
@@ -149,8 +183,14 @@ function Get-RetirePlan {
         $owned = @($application.OwnedCollections)
         $foreignCollections = @($application.Collections | Where-Object { $_ -notin $owned })
 
+        # The package folder and the Apps.csv row of this version: the folder
+        # by the convention "<Name> - <Version>", else the folder whose content
+        # location the application points at; the row by name and version.
         $packageRoot = Join-Path (Get-PackageWorkRoot -Config $Config) $application.AppName
         if (-not (Test-Path -LiteralPath $packageRoot)) { $packageRoot = $null }
+        $identity = Split-AppFolderName -FolderName $application.AppName
+        $definition = $null
+        if ($identity.Version -and (Test-AppListRow -Name $identity.Name -Version $identity.Version)) { $definition = $identity }
 
         $plan += [pscustomobject]@{
             AppName             = $application.AppName
@@ -161,7 +201,8 @@ function Get-RetirePlan {
             DissolveSupersedence = $(if ($Level -eq 'Remove') { @($application.SupersededBy) } else { @() })
             RevokeContent       = ($Level -eq 'Remove')
             DeleteApplication   = ($Level -eq 'Remove')
-            DeletePackageFolder = $(if ($Level -eq 'Remove' -and $DeletePackageFolder) { $packageRoot } else { $null })
+            DeletePackageFolder = $(if ($Level -eq 'Remove') { $packageRoot } else { $null })
+            DeleteDefinition    = $(if ($Level -eq 'Remove') { $definition } else { $null })
         }
     }
 
@@ -192,13 +233,14 @@ function Format-RetirePlan {
         if ($entry.RevokeContent)       { $lines += '    revoke content from the distribution points' }
         if ($entry.DeleteApplication)   { $lines += '    delete the application' }
         if ($entry.DeletePackageFolder) { $lines += "    delete folder          $($entry.DeletePackageFolder)" }
+        if ($entry.DeleteDefinition)    { $lines += "    delete Apps.csv row    $($entry.DeleteDefinition.Name) - $($entry.DeleteDefinition.Version)" }
         if ($entry.Origin -eq 'foreign') { $lines += '    NOTE: this application was not published by this tool' }
 
         $lines += ''
     }
 
-    if ($Level -eq 'Retire') { $lines += 'The applications, their collections, their content and their supersedence all stay.' }
-    $lines += 'The Apps.csv rows are never touched.'
+    if ($Level -eq 'Retire') { $lines += 'The applications, their collections, their content, their supersedence, the package folders and the Apps.csv rows all stay.' }
+    else { $lines += 'Remove takes the version out of the site, off the share and out of Apps.csv.' }
 
     return ($lines -join [Environment]::NewLine)
 }
@@ -308,6 +350,16 @@ function Invoke-RetirePlan {
                 }
                 catch { Write-Fail ("Folder: {0}" -f $_.Exception.Message) }
             }
+
+            # The row goes last, and only once the application is gone - a row
+            # without an application is "ready to publish", which would bring
+            # the version straight back.
+            if ($entry.DeleteDefinition -and $applicationDeleted) {
+                Remove-AppListRow -Name $entry.DeleteDefinition.Name -Version $entry.DeleteDefinition.Version
+            }
+            elseif ($entry.DeleteDefinition) {
+                Write-Info 'Keeping the Apps.csv row - the application is still in the site.'
+            }
         }
     }
 }
@@ -339,8 +391,7 @@ function retireApps {
     $choice = Show-RetireDialog -Inventory $inventory
     if (-not $choice) { Write-Info 'Cancelled.'; return }
 
-    $plan = Get-RetirePlan -Applications $choice.Applications -Level $choice.Level `
-                -DeletePackageFolder:$choice.DeletePackageFolder -Config $config
+    $plan = Get-RetirePlan -Applications $choice.Applications -Level $choice.Level -Config $config
 
     $answer = Show-MessageDialog -Text ("{0} {1} application(s):`n`n{2}" -f $choice.Level, @($plan).Count, (Format-RetirePlan -Plan $plan -Level $choice.Level)) `
                 -Caption "$($choice.Level) applications" -Buttons 'YesNo' -Icon 'Warning'
