@@ -1,4 +1,4 @@
-# Project status
+﻿# Project status
 
 Working document for picking the project up again - in a new session, on another machine, or
 after a break. `README.md` describes how the tool works; this file records **where it stands,
@@ -36,6 +36,18 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
+## Started from the console (2026-09-16, afternoon)
+
+`Console\SCCMAppHelper.xml` + `Console\Install-ConsoleExtension.ps1`: an Executable action on
+the Applications node (`{d2e2cba7-98f5-4d3b-bc2f-b670f0621207}`, RootNodeDescription in the
+console's SoftwareLibraryNode.xml; a node's actions show on its folders and its result rows).
+It runs `start-SCCMAppHelper.cmd -Select "##SUB:LocalizedDisplayName##"` from the installation
+folder - deliberately with the console window, that is where the tool reports. The start script
+got `-Select` (application names "<Name> - <Version>" = the ConfigMgr display name = the
+inventory row's `AppFullName`); a literal `##SUB:...##` token (right-click on the node itself)
+is ignored. Verified on the lab console machine by starting the .cmd the way the action does
+and reading the grid selection through UI Automation: the right-clicked application is the
+selected row. The console needs a restart to show the entry.
 ## All six phases are the row's (2026-09-16)
 
 Packages built by an earlier generation of the tool stayed "Published (foreign)" after an

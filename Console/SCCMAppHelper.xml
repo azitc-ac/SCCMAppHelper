@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ConfigMgr console extension: start SCCMAppHelper from the Applications node
+
+  Installed by Install-ConsoleExtension.ps1 into
+    <AdminConsole>\XmlStorage\Extensions\Actions\{d2e2cba7-98f5-4d3b-bc2f-b670f0621207}\
+  the Applications node (Software Library > Application Management > Applications), its
+  folders and the applications listed there; the GUID is the node's RootNodeDescription in
+  this console's XmlStorage\ConsoleRoot\SoftwareLibraryNode.xml.
+
+  Placeholder ##TOOL_PATH## is filled in by the installer. Runtime token the console replaces:
+  ##SUB:LocalizedDisplayName## - the application that was right-clicked; on the node itself
+  it stays as it is and the tool ignores it. Unknown elements make the console drop the action
+  silently, so the file stays minimal.
+-->
+<ActionDescription
+    Class="Executable"
+    DisplayName="SCCMAppHelper"
+    MnemonicDisplayName="SCCMAppHelper"
+    Description="Opens SCCMAppHelper with this application selected">
+  <ShowOn>
+    <string>ContextMenu</string>
+  </ShowOn>
+  <ImagesDescription>
+    <ResourceAssembly>
+      <Assembly>AdminUI.UIResources.dll</Assembly>
+      <Type>Microsoft.ConfigurationManagement.AdminConsole.UIResources.Properties.Resources.resources</Type>
+    </ResourceAssembly>
+    <ImageResourceName>Application</ImageResourceName>
+  </ImagesDescription>
+  <Executable>
+    <FilePath>##TOOL_PATH##\start-SCCMAppHelper.cmd</FilePath>
+    <Parameters>-Select "##SUB:LocalizedDisplayName##"</Parameters>
+  </Executable>
+</ActionDescription>

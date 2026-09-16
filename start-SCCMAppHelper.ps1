@@ -14,9 +14,17 @@
     The main window lists every application with the state of all three, and
     every action is taken from a row of that list.
 
+.PARAMETER Select
+    Application names ("<Name> - <Version>", the ConfigMgr display name) to select when the
+    main window opens. The console action on the Applications node passes the application
+    that was right-clicked; a token the console did not fill in (##SUB:...##) is ignored.
+
 .NOTES
     Run in Windows PowerShell 5.1 with the ConfigMgr console installed.
 #>
+param(
+    [string[]]$Select = @()
+)
 
 $rootDir = $PSScriptRoot
 if (-not $rootDir) { $rootDir = (Get-Location).Path }
@@ -62,7 +70,7 @@ check-prereqs -Config $config
 # built, an application published, a site switched in the tools menu - shows
 # up as soon as the window is back.
 $continue = $true
-$select = @()
+$select = @($Select | Where-Object { $_ -and $_ -notlike '##SUB:*' })
 while ($continue) {
     $config = Get-ActiveConfig
 

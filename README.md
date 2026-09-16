@@ -1,4 +1,4 @@
-# SCCMAppHelper
+﻿# SCCMAppHelper
 
 Quickly create and publish Configuration Manager applications using PSADT - the ConfigMgr
 counterpart to [IntuneWin32Helper](../IntuneWin32Helper).
@@ -26,6 +26,14 @@ Double-click `start-SCCMAppHelper.cmd`, or from a prompt:
 
 Windows PowerShell 5.1 with the ConfigMgr console installed. The batch file starts it with
 `-STA` and `-ExecutionPolicy Bypass` and keeps the window open if the tool ends with an error.
+
+### From the ConfigMgr console
+
+`Console\Install-ConsoleExtension.ps1` (elevated, then restart the console) adds
+**SCCMAppHelper** to the right-click menu of the Applications node, its folders and every
+application listed there. The tool starts in place from this folder - nothing is copied - with
+the application that was right-clicked selected in the main window (`-Select "<Name> -
+<Version>"` on `start-SCCMAppHelper.ps1`). `-Uninstall` removes the entry again.
 
 ### Installing and updating on a server without git
 
