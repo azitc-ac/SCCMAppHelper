@@ -329,7 +329,7 @@ function Show-InventoryDialog {
         $usable = @($selected | Where-Object { -not $_.IsLegacy -or $_.HasDefinition })
         $editButton.IsEnabled    = $one -and ($usable.Count -eq 1)
         $versionButton.IsEnabled = $one
-        $deleteButton.IsEnabled  = (@($selected | Where-Object { $_.HasDefinition }).Count -gt 0)
+        $deleteButton.IsEnabled  = (@($selected | Where-Object { ($_.HasDefinition -or $_.HasPackage) -and -not $_.IsPublished }).Count -gt 0)
         $buildButton.IsEnabled   = (@($usable | Where-Object { $_.HasDefinition -or $_.HasPackage }).Count -gt 0)
         $publishButton.IsEnabled = (@($usable | Where-Object { -not $_.IsLegacy -and ($_.HasDefinition -or $_.HasPackage) }).Count -gt 0)
     }
