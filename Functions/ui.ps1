@@ -917,17 +917,22 @@ function Open-EditDialog {
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('Version', 'ProductVersion')           -Value $props['ProductVersion']
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('Publisher', 'Vendor', 'Manufacturer') -Value $props['Manufacturer']
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('DetectionMethod')                     -Value 'Registry'
-                Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('InstallCmd') -Value ("Start-ADTProcess -FilePath '{0}' -ArgumentList '/S' -WindowStyle 'Hidden'" -f (Split-Path -Leaf $ofd.FileName))
-
-                # /S is a guess and it is only right for NSIS. A version resource
-                # does not say which installer kind built the file, so the switch
-                # cannot be derived from what was just read - and the wrong one
-                # does not fail loudly: the installer ignores it, waits for a
-                # click nobody can give it in session 0, and the deployment sits
-                # at "in progress" until it times out.
+                # The engine that built the file decides both switches; the
+                # strings of the installer's stub say which one it is
+                # (Get-InstallerEngine). Only an installer the scan cannot place
+                # gets the /S guess - and then the warning, because the wrong
+                # switch does not fail loudly: the installer ignores it, waits
+                # for a click nobody can give it in session 0, and the
+                # deployment sits at "in progress" until it times out.
+                $engine = Get-InstallerEngine -Path $ofd.FileName
+                $exeName = Split-Path -Leaf $ofd.FileName
+                Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('InstallCmd')   -Value (Get-ExeInstallCommand -FileName $exeName -Engine $engine)
+                $nameNow = $(if ($textBoxes.Contains('Name')) { [string]$textBoxes['Name'].Text } else { '' }); if (-not $nameNow) { $nameNow = [string]$props['ProductName'] }
+                if ($nameNow) { Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('UninstallCmd') -Value (Get-ExeUninstallCommand -Name $nameNow -Engine $engine) }
                 if ($textBoxes.Contains('InstallCmd')) {
-                    $textBoxes['InstallCmd'].ToolTip = 'The silent switch depends on the installer kind - /S fits NSIS, and is only a guess here.'
+                    $textBoxes['InstallCmd'].ToolTip = $(if ($engine.Engine -eq 'unknown') { 'The silent switch depends on the installer kind - /S fits NSIS, and is only a guess here.' } else { 'Silent switch of the ' + $engine.Engine + ' engine, read from the installer.' })
                 }
+                if ($engine.Engine -ne 'unknown') { return }
                 $null = Show-MessageDialog -Owner $window -Caption 'From EXE' -Buttons 'OK' -Icon 'Warning' -Text (
                     "The install command was filled in with /S. That is the NSIS switch, and it is a guess: " +
                     "an EXE does not say which installer built it.`n`n" +

@@ -655,10 +655,12 @@ function ConvertTo-FileAppRow {
         $app.Name            = [string]$props['ProductName']
         $app.Version         = [string]$props['ProductVersion']
         $app.DetectionMethod = 'Registry'
-        # /S is the NSIS switch and a guess - an EXE does not say which
-        # installer built it. The editor says so next to the field.
-        $app.InstallCmd      = "Start-ADTProcess -FilePath '$fileName' -ArgumentList '/S'   # /S fits NSIS - check the installer kind"
-        $app.Notes           = "from $fileName"
+        # The engine that built the EXE decides both switches (Get-InstallerEngine);
+        # what could not be told gets /S and says so in the command.
+        $engine = Get-InstallerEngine -Path $Path
+        $app.InstallCmd      = Get-ExeInstallCommand -FileName $fileName -Engine $engine
+        if ($app.Name) { $app.UninstallCmd = Get-ExeUninstallCommand -Name $app.Name -Engine $engine }
+        $app.Notes           = "from $fileName ($($engine.Engine))"
     }
 
     return $app
@@ -744,6 +746,16 @@ function Add-AppFromSource {
             }
             $installer = $found.File
             $title     = 'New application from winget'
+            # A manifest of type "exe" says nothing about the engine; the
+            # downloaded file does. Only then are the switches worth a second look.
+            if ($installer -and $app.DetectionMethod -ne 'MSI' -and $app.Notes -match '\(\w+, exe' -and (Test-Path -LiteralPath $installer)) {
+                $engine = Get-InstallerEngine -Path $installer
+                if ($engine.Engine -ne 'unknown') {
+                    $app.InstallCmd   = Get-ExeInstallCommand -FileName (Split-Path -Leaf $installer) -Engine $engine
+                    $app.UninstallCmd = Get-ExeUninstallCommand -Name $app.Name -Engine $engine
+                    $app.Notes        = $app.Notes + ', engine ' + $engine.Engine
+                }
+            }
         }
         'File' {
             $ofd = New-Object Microsoft.Win32.OpenFileDialog
@@ -864,6 +876,17 @@ function Edit-AppDefinition {
         $app.Name    = $InventoryRow.Name
         $app.Version = $InventoryRow.Version
         $app.Publisher = $InventoryRow.Publisher
+    }
+    # An EXE package without an uninstall command removes nothing on uninstall
+    # and supersedence. The installer in Files\ says which engine built it, and
+    # that decides the switch - so the field comes filled in, and the user only
+    # has to keep it.
+    if ([string]::IsNullOrWhiteSpace([string]$app.UninstallCmd) -and $app.DetectionMethod -ne 'MSI' -and $InventoryRow.HasPackage -and -not $InventoryRow.IsLegacy) {
+        $exe = Find-PackageInstallerExe -ContentPath $InventoryRow.ContentPath -InstallCmd ([string]$app.InstallCmd)
+        if ($exe) {
+            $app.UninstallCmd = Get-ExeUninstallCommand -Name $app.Name -Engine (Get-InstallerEngine -Path $exe)
+            Write-Info ("UninstallCmd filled in from {0}" -f (Split-Path -Leaf $exe))
+        }
     }
     $item = [ordered]@{}
     foreach ($column in $script:AppListColumns) { $item[$column] = $app.$column }

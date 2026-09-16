@@ -1282,6 +1282,129 @@ function Test-AppFlag {
     part that stays the same across versions - and no shorter than that, or the
     uninstall reaches products nobody meant.
 #>
+<#
+    Which setup engine built an EXE installer, and the silent switches that
+    engine takes. An EXE does say which engine built it - not in its version
+    resource, but in the strings of its stub: "Inno Setup" in an Inno Setup
+    installer, "Nullsoft" in an NSIS one, ".wixburn" in the PE header of a Burn
+    bundle, "InstallShield" in an InstallShield one, and 7-Zip's own installer
+    describes itself as "7-Zip Installer". Measured on the packages of the lab
+    share: FileZilla (NSIS), SQL Server Management Studio 20 and the .NET
+    desktop runtime (Burn), 7-Zip (its SFX) were all told apart by the first
+    six megabytes of the file; the Office bootstrapper, the Visual Studio style
+    SSMS 22 installer and Oracle's setup.exe carry none of the markers and stay
+    'unknown', where /S remains the guess it always was.
+
+    The uninstall switch is what Uninstall-ADTApplication hands to the
+    product's UninstallString as -AdditionalArgumentList (it prefers a
+    QuietUninstallString when the uninstall key has one).
+#>
+function Get-InstallerEngine {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $engine = 'unknown'
+    try {
+        $info = (Get-Item -LiteralPath $Path).VersionInfo
+        $description = [string]$info.FileDescription + ' ' + [string]$info.InternalName + ' ' + [string]$info.ProductName
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $length = [int][Math]::Min($stream.Length, 6MB)
+            $buffer = New-Object byte[] $length
+            $null = $stream.Read($buffer, 0, $length)
+        }
+        finally { $stream.Close() }
+        $ascii   = [System.Text.Encoding]::ASCII.GetString($buffer)
+        $unicode = [System.Text.Encoding]::Unicode.GetString($buffer)
+
+        if     ($ascii -match 'Inno Setup' -or $unicode -match 'Inno Setup')               { $engine = 'inno' }
+        elseif ($ascii -match 'Nullsoft' -or $unicode -match 'Nullsoft')                   { $engine = 'nsis' }
+        elseif ($ascii -match '\.wixburn')                                                  { $engine = 'burn' }
+        elseif ($ascii -match 'InstallShield' -or $unicode -match 'InstallShield')         { $engine = 'installshield' }
+        elseif ($description -match '7-Zip Installer')                                      { $engine = '7zip' }
+        elseif ($description -match '^vs_|SSMS Installer|Visual Studio Installer')          { $engine = 'vsbootstrapper' }
+    }
+    catch { $engine = 'unknown' }
+
+    return (Get-InstallerEngineSwitch -Engine $engine)
+}
+
+<#
+    The switches per engine, also for what a winget manifest calls the
+    installer type (inno, nullsoft, burn, exe). 'exe' and 'unknown' get /S,
+    which fits NSIS and is a guess for everything else - the note says so and
+    goes into the command as a comment.
+#>
+function Get-InstallerEngineSwitch {
+    param([Parameter(Mandatory = $true)][string]$Engine)
+
+    switch ($Engine.ToLower()) {
+        'inno'           { return [pscustomobject]@{ Engine = 'inno';           Install = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART'; Uninstall = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART'; Note = '' } }
+        'nsis'           { return [pscustomobject]@{ Engine = 'nsis';           Install = '/S';                                       Uninstall = '/S';                                       Note = '' } }
+        'nullsoft'       { return [pscustomobject]@{ Engine = 'nsis';           Install = '/S';                                       Uninstall = '/S';                                       Note = '' } }
+        '7zip'           { return [pscustomobject]@{ Engine = '7zip';           Install = '/S';                                       Uninstall = '/S';                                       Note = '' } }
+        'burn'           { return [pscustomobject]@{ Engine = 'burn';           Install = '/quiet /norestart';                        Uninstall = '/quiet /norestart';                        Note = '' } }
+        'installshield'  { return [pscustomobject]@{ Engine = 'installshield';  Install = '/s /v"/qn REBOOT=ReallySuppress"';         Uninstall = '/s';                                       Note = 'InstallShield: /s /v"/qn" for an MSI based setup, /s alone for InstallScript - check the vendor''s notes' } }
+        'vsbootstrapper' { return [pscustomobject]@{ Engine = 'vsbootstrapper'; Install = '--quiet --norestart --wait';               Uninstall = '--quiet --norestart --wait';               Note = 'Visual Studio style bootstrapper: --wait matters, without it the installer returns before it is done' } }
+        default          { return [pscustomobject]@{ Engine = 'unknown';        Install = '/S';                                       Uninstall = '/S';                                       Note = '/S fits NSIS and is a guess - the installer kind could not be told' } }
+    }
+}
+
+<#
+    The uninstall command of an EXE based package: Uninstall-ADTApplication
+    finds the product's uninstall key by name, runs its UninstallString (the
+    QuietUninstallString when there is one) and appends the engine's silent
+    switch. The name is the product name without a trailing version, the same
+    search the uninstall-previous block uses.
+#>
+function Get-ExeUninstallCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)]$Engine
+    )
+
+    $searchName = (Get-ProductSearchName -Name $Name).Replace("'", "''")
+    $command = "Uninstall-ADTApplication -Name '$searchName' -ApplicationType EXE -AdditionalArgumentList '$($Engine.Uninstall)'"
+    if ($Engine.Note) { $command += '   # ' + $Engine.Note }
+    return $command
+}
+
+<#
+    The install command of an EXE based package, from the file name and the
+    engine's switch.
+#>
+function Get-ExeInstallCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [Parameter(Mandatory = $true)]$Engine
+    )
+
+    $command = "Start-ADTProcess -FilePath '$FileName' -ArgumentList '$($Engine.Install)'"
+    if ($Engine.Note) { $command += '   # ' + $Engine.Note }
+    return $command
+}
+
+<#
+    The installer EXE a package carries: the file named in the install command
+    when that file is in Files\, else the only EXE in Files\. Nothing when the
+    package has none or several - a guess would name the wrong engine.
+#>
+function Find-PackageInstallerExe {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContentPath,
+        [string]$InstallCmd = ''
+    )
+
+    $files = Join-Path $ContentPath 'Files'
+    if (-not (Test-Path -LiteralPath $files)) { return $null }
+    if ($InstallCmd -match "-FilePath\s+'([^']+\.exe)'" -or $InstallCmd -match '-FilePath\s+"([^"]+\.exe)"') {
+        $named = Join-Path $files $Matches[1]
+        if (Test-Path -LiteralPath $named) { return $named }
+    }
+    $exes = @(Get-ChildItem -LiteralPath $files -Filter '*.exe' -File -ErrorAction SilentlyContinue)
+    if ($exes.Count -eq 1) { return $exes[0].FullName }
+    return $null
+}
+
 function Get-ProductSearchName {
     param([Parameter(Mandatory = $true)][string]$Name)
 
@@ -1656,7 +1779,7 @@ function New-AppPackage {
         # PSADT uninstalls an MSI by itself (zero-config); an EXE it cannot. Without an
         # UninstallCmd the application's uninstall deployment type runs and removes nothing -
         # and supersedence, which uninstalls through exactly that, is silently toothless.
-        Write-Warn ("EXE package without UninstallCmd - uninstall and supersedence remove nothing. Example: Start-ADTProcess -FilePath `"`$envProgramFiles\{0}\Uninstall.exe`" -ArgumentList '/S'" -f $App.Name)
+        Write-Warn ("EXE package without UninstallCmd - uninstall and supersedence remove nothing. Edit the row: the field is filled in with Uninstall-ADTApplication for the installer's engine. Example: Start-ADTProcess -FilePath `"`$envProgramFiles\{0}\Uninstall.exe`" -ArgumentList '/S'" -f $App.Name)
     }
     if (-not $packageMsi -and $App.ProductCode -and $App.DetectionMethod -in @('MSI', 'Registry') -and -not $App.DetectionPattern) {
         # The row came from a winget manifest that offers both installers: MSI metadata, EXE

@@ -268,6 +268,32 @@ MSI detection built from that code looks for a key this package never writes and
 package without an `UninstallCmd` - its uninstall deployment type, and every supersedence that
 relies on it, removes nothing.
 
+For an EXE package the uninstall command is filled in rather than asked for:
+
+```powershell
+Uninstall-ADTApplication -Name '7-Zip' -ApplicationType EXE -AdditionalArgumentList '/S'
+```
+
+PSADT finds the product's uninstall key by name, runs its `UninstallString` (the
+`QuietUninstallString` when there is one) and appends the silent switch. The switch depends on
+the engine that built the installer, and the installer says which one it is - not in its
+version resource, but in the strings of its stub: `Inno Setup`, `Nullsoft` (NSIS), `.wixburn`
+(Burn), `InstallShield`, 7-Zip's own installer, a Visual Studio style bootstrapper. The tool
+reads that from the file (`Get-InstallerEngine`) wherever it has one - From EXE in the editor,
+an installer picked from disk, the file winget downloaded, and on Edit the installer in
+`Files\` of an existing package whose uninstall field is empty - and fills both commands. An
+installer it cannot place gets `/S` with a comment saying so; only then does the From EXE
+warning appear.
+
+| Engine | Install | Uninstall (`-AdditionalArgumentList`) |
+| --- | --- | --- |
+| Inno Setup | `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` | the same |
+| NSIS, 7-Zip | `/S` | `/S` |
+| Burn (WiX bundle) | `/quiet /norestart` | `/quiet /norestart` |
+| InstallShield | `/s /v"/qn REBOOT=ReallySuppress"` | `/s` - check the vendor's notes |
+| Visual Studio bootstrapper | `--quiet --norestart --wait` | the same |
+| unknown | `/S` (guess, commented) | `/S` (guess, commented) |
+
 `DetectionMethod` is a list rather than a free text field, and what `DetectionPattern` has to
 contain depends on it - so the hint under the field follows the method, and the field is
 disabled where nothing belongs in it:

@@ -36,7 +36,29 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
-## "Reading the share and the site" in 2 s instead of 11 (2026-09-16, evening)
+## The uninstall command of an EXE package is filled in (2026-09-16, night)
+
+The user: PSADT has a cmdlet that runs the product's uninstall string and makes it silent -
+`Uninstall-ADTApplication -Name '7-Zip'` - fill that in when a row is defined or edited. Done,
+with the engine read from the installer: `Get-InstallerEngine` scans the first 6 MB of the EXE
+for the stub strings (Inno Setup, Nullsoft, .wixburn, InstallShield) and the version resource
+(7-Zip Installer, vs_*/SSMS Installer), `Get-InstallerEngineSwitch` maps engine or winget
+installer type to the install and uninstall switches, `Get-ExeInstallCommand` /
+`Get-ExeUninstallCommand` build the two commands, `Find-PackageInstallerExe` names the installer
+in `Files\` (the file of the install command, else the only EXE). Used by From EXE in the
+editor, `ConvertTo-FileAppRow`, the winget row (`ConvertTo-CatalogAppRow`, type -> switch; a
+plain "exe" type is re-read from the downloaded file in Add), and Edit, which fills an empty
+uninstall field of an EXE package from the installer in `Files\`. The From EXE warning is
+now only shown for an installer the scan cannot place. The old note in the editor - "an EXE does
+not say which installer built it" - was wrong; it does.
+
+Measured on the lab share: FileZilla -> nsis, SSMS 20 and the .NET desktop runtime -> burn,
+7-Zip -> its SFX, the Office bootstrapper / SSMS 22 (Visual Studio style) / Oracle setup.exe ->
+unknown or bootstrapper. And live on the lab device under SYSTEM through Run Scripts:
+`Uninstall-ADTApplication -Name '7-Zip' -ApplicationType EXE -AdditionalArgumentList '/S'`
+with the PSADT module out of the client cache removed 7-Zip 26.02 in 4 s, exit 0, no window
+(7-Zip carries a QuietUninstallString, PSADT used it); the required deployment put it back.
+
 
 
 The user: it always takes long. Measured on the lab site (22 applications, 49 deployments):

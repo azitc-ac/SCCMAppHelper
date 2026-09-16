@@ -584,10 +584,16 @@ function ConvertTo-CatalogAppRow {
             "Start-ADTProcess -FilePath '$fileName'   # no silent switch in the manifest - check it"
         }
 
-        # An uninstall string is only guessable from the ProductCode, which a
-        # non-MSI installer usually does not have.
+        # A ProductCode means an MSI underneath - msiexec removes it cleanly.
+        # Otherwise Uninstall-ADTApplication runs the product's own uninstaller
+        # with the silent switch of the engine the manifest names; a manifest
+        # type of plain "exe" gets the /S guess, and the downloaded file is
+        # looked at afterwards (Add-AppDefinition).
         if ($productCode -match '^\{.+\}$') {
             $uninstallCommand = "Start-ADTMsiProcess -Action 'Uninstall' -ProductCode '$productCode'"
+        }
+        else {
+            $uninstallCommand = Get-ExeUninstallCommand -Name $name -Engine (Get-InstallerEngineSwitch -Engine ([string]$Installer.InstallerType))
         }
     }
 
