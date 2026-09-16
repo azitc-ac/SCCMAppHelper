@@ -36,7 +36,25 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
-## Tools > Move source root (2026-09-16, evening)
+## "Reading the share and the site" in 2 s instead of 11 (2026-09-16, evening)
+
+
+The user: it always takes long. Measured on the lab site (22 applications, 49 deployments):
+`Get-CMApplication` 1.9 s, `Get-CMApplicationDeployment` 5.6 s (it fetches every deployment's
+status, and the list only counts them), `Get-CMDistributionStatus` 0.2 s, module import 1 s.
+
+Now `Get-CMApplicationStateFromSql` reads the site database first: the latest application CIs
+(`fn_ListLatestApplicationCIs`), every deployment type digest (`v_ConfigurationItems`,
+`CIType_ID` 21 - the content location, the tool signature and the fingerprint live in the
+deployment type's digest, not in the application's, and the digest's elements carry a namespace
+prefix the location pattern now allows), the package id (`v_CIContentPackage`) and the deployment
+count (`v_ApplicationAssignment`) - three queries, 0.5 s, and it does not grow per application
+the way the provider's lazy package XML does. Compared field by field against the provider
+path on the lab site: 22 applications, no difference. The provider path stays as the fallback
+(no database configured, no rights), with `SMS_ApplicationAssignment` over WMI instead of
+`Get-CMApplicationDeployment` for the count (0.2 s for the same 49). Cold read of the list:
+11.3 s -> 2.3 s.
+
 
 `Functions\sourceroot.ps1` (plan / format / invoke) and `Show-MoveSourceRootDialog` in ui.ps1.
 The user's case: `E:\Sources\Applications` shared as `Sources` becomes `E:\Apps` shared as

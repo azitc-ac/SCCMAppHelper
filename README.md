@@ -539,7 +539,7 @@ ConfigMgr environments, all remaining keys are shared across sites.
 | --- | --- |
 | `name` | Display name in the site picker |
 | `siteCode`, `siteServer` | ConfigMgr site - the site drive is created on demand |
-| `sqlServer`, `database` | Used by the outdated-apps report; empty `database` means `CM_<siteCode>` |
+| `sqlServer`, `database` | The main list reads the site's applications, deployment types and deployments from the database (a few tenths of a second; the provider path takes seconds and grows with every application) and falls back to the provider when the database is not reachable; also used by the outdated-apps report. Empty `database` means `CM_<siteCode>` |
 | `sourceRoot` | UNC path of the package share - used as the content location |
 | `sourceRootLocal` | Local path of the same share, used when the tool runs on the site server |
 | `distributionPointName` / `distributionPointGroupName` | Distribution target (group wins if both are set) |
