@@ -1805,3 +1805,79 @@ function Show-RetireDialog {
 }
 
 #endregion
+
+#region ---------------------------------------------------- move source root
+
+<#
+    Tools > Move source root: asks for the new local root and the new UNC root,
+    suggests "<drive>:\Apps" and "\<server>\Apps" - the shortest that still
+    says what it is. Returns @{ NewLocalRoot; NewUncRoot } or $null.
+#>
+function Show-MoveSourceRootDialog {
+    param($Config = (Get-ActiveConfig))
+
+    $oldLocal = [string]$Config.sourceRootLocal
+    $oldUnc   = [string]$Config.sourceRoot
+    $drive = $(if ($oldLocal -match '^([A-Za-z]:)') { $Matches[1] } else { 'E:' })
+    $server = $(if ($oldUnc -match '^\\([^\]+)') { $Matches[1] } else { [string]$Config.siteServer })
+
+    $window = New-Object Windows.Window
+    $window.Title = 'Move source root'
+    $window.Width = 640
+    $window.SizeToContent = 'Height'
+    $window.ResizeMode = 'NoResize'
+    $window.WindowStartupLocation = 'CenterScreen'
+    [Windows.Automation.AutomationProperties]::SetAutomationId($window, 'MoveSourceRootDialog')
+
+    $panel = New-Object Windows.Controls.StackPanel
+    $panel.Margin = '16'
+    $window.Content = $panel
+
+    $intro = New-Object Windows.Controls.TextBlock
+    $intro.TextWrapping = 'Wrap'
+    $intro.Margin = '0,0,0,12'
+    $intro.Text = "The package folders move, the share is created on the site server, every deployment type below the old root is re-pointed, config.json follows. Every deployment type gets a new content object, which the site distributes by itself; clients download a package again the next time they repair, uninstall or re-install it.`n`nCurrent root:  $oldUnc`nOn disk:       $oldLocal"
+    $null = $panel.Children.Add($intro)
+
+    $boxes = @{}
+    foreach ($field in @(@('NewLocalRoot', 'New folder on the site server', "$drive\Apps", 'Where the package folders go - one rename when it does not exist yet'),
+                         @('NewUncRoot',   'New share (UNC)',               "\$server\Apps", 'The root the site reads the content through; created with the old share''s access list when the tool runs on the server'))) {
+        $label = New-Object Windows.Controls.TextBlock
+        $label.Text = $field[1]
+        $label.Margin = '0,6,0,2'
+        $null = $panel.Children.Add($label)
+        $box = New-Object Windows.Controls.TextBox
+        $box.Text = $field[2]
+        $box.ToolTip = $field[3]
+        $box.Padding = '4'
+        [Windows.Automation.AutomationProperties]::SetAutomationId($box, $field[0])
+        $null = $panel.Children.Add($box)
+        $boxes[$field[0]] = $box
+    }
+
+    $buttons = New-Object Windows.Controls.StackPanel
+    $buttons.Orientation = 'Horizontal'
+    $buttons.HorizontalAlignment = 'Right'
+    $buttons.Margin = '0,16,0,0'
+    $null = $panel.Children.Add($buttons)
+    foreach ($caption in 'Preview...', 'Cancel') {
+        $button = New-Object Windows.Controls.Button
+        $button.Content = $caption
+        $button.MinWidth = 100
+        $button.Margin = '8,0,0,0'
+        $button.Padding = '8,4'
+        $button.Tag = $caption
+        [Windows.Automation.AutomationProperties]::SetAutomationId($button, ($caption -replace '[^A-Za-z]', ''))
+        $button.Add_Click({ param($s, $e) $window.Tag = [string]$s.Tag; $window.Close() })
+        $null = $buttons.Children.Add($button)
+    }
+
+    $null = $window.ShowDialog()
+    if ([string]$window.Tag -ne 'Preview...') { return $null }
+    $local = $boxes['NewLocalRoot'].Text.Trim()
+    $unc   = $boxes['NewUncRoot'].Text.Trim()
+    if (-not $local -or -not $unc) { return $null }
+    return [pscustomobject]@{ NewLocalRoot = $local; NewUncRoot = $unc }
+}
+
+#endregion

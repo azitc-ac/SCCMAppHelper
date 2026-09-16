@@ -599,6 +599,17 @@ hand in the console.
 * **Add ConfigMgr site** - the setup assistant described above.
 * **Check site configuration** - tests provider, package share, console module, SQL and the
   collections of the active site and prints a report.
+* **Move source root** - moves the package share to a shorter UNC root, for the 260 character
+  path limit that counts `\\server\share\<package>\<file>` as the site reads it (see *Package
+  layout*). Asks for the new folder on the site server and the new share, previews, then: the
+  folders (one rename on the same volume; a copy across volumes, and it says so beforehand),
+  the share (created on the site server with the old share's access list; elsewhere create it
+  first), every deployment type on the site whose content location lies below the old root -
+  spelled with any server name, also the ones not published by this tool - and finally
+  `config.json`. A run that stops halfway is started again and continues. Every re-pointed
+  deployment type gets a new content object, which the site distributes to the DPs by
+  itself; clients download a package again the next time they repair, uninstall or re-install
+  it, installed applications stay as they are.
 
 ## Logos
 

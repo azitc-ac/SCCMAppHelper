@@ -31,6 +31,7 @@ if (-not $toolVersion) {
 . "$rootDir\Functions\catalog.ps1"
 . "$rootDir\Functions\retire.ps1"
 . "$rootDir\Functions\inventory.ps1"
+. "$rootDir\Functions\sourceroot.ps1"
 
 #region --------------------------------------------------------------- output
 
@@ -2977,6 +2978,7 @@ function Show-ToolsMenu {
         [pscustomobject]@{ Tool = 'Switch ConfigMgr site';         Description = 'Work against a different site of the "sites" list in config.json.' }
         [pscustomobject]@{ Tool = 'Add ConfigMgr site';            Description = 'Setup assistant: connect to a server and read its settings automatically.' }
         [pscustomobject]@{ Tool = 'Check site configuration';      Description = 'Test provider, share, console module, SQL and collections of the active site.' }
+        [pscustomobject]@{ Tool = 'Move source root';              Description = 'Move the package share (shorter UNC root): folders, share, every deployment type, config.json.' }
     )
 
     $selection = Open-SelectDialog -data $tools -title 'Tools'
@@ -2991,6 +2993,7 @@ function Show-ToolsMenu {
         'Switch ConfigMgr site'      { $null = Get-ActiveConfig -ForceSiteSelection }
         'Add ConfigMgr site'         { $null = Start-SetupWizard }
         'Check site configuration'   { $null = Test-SiteConfiguration }
+        'Move source root'           { Move-SourceRoot }
     }
 }
 

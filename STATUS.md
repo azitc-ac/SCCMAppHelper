@@ -36,6 +36,39 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
+## Tools > Move source root (2026-09-16, evening)
+
+`Functions\sourceroot.ps1` (plan / format / invoke) and `Show-MoveSourceRootDialog` in ui.ps1.
+The user's case: `E:\Sources\Applications` shared as `Sources` becomes `E:\Apps` shared as
+`Apps` - 17 characters less in every content path. What hangs on the root and the order it is
+handled: package folders, share, deployment types, config.json (last, and only when every
+deployment type is across - the old root in config.json is what a second run finds the rest
+by; the first lab run wrote it too early and the rerun could not find its own way back).
+
+Walked on the lab site, `\\LAB01\Sources\Applications` -> `\\LAB01\Apps`, 27 folders, 17
+deployment types, and three things measured:
+
+* `Move-Item` on a directory copies and deletes - 4 MB of a 35 GB tree copied, then "cannot
+  remove" on the first folder the account may not delete. `[System.IO.Directory]::Move` is a
+  rename on the same volume (instant, atomic, ACLs travel along). The lab's `C:\Sources` is a
+  junction onto volume H:, so `C:\Sources\Applications` -> `C:\Apps` would have been a 33 GB
+  copy behind identical drive letters; the plan now walks up to the nearest junction of both
+  paths, says "same volume: a rename" or "ANOTHER VOLUME: n GB are copied", and uses robocopy
+  /MOVE only in the latter case.
+* Nine of the 17 deployment types pointed at `\\lab01\...` (short name, the older scripts) and
+  eight at `\\LAB01.lab.example\...`; the root is matched by share and path with the server
+  resolved through DNS, or the short-name half would have been left behind.
+* A changed content location is a **new content object**: every deployment type got a new
+  `Content_<guid>` and revision +1, and the distribution manager took snapshots from the new
+  path and sent them to the DP on its own within a minute - no `Update-CMDistributionPoint`
+  needed, and none is issued. The tool's older warning ("ConfigMgr will create new content")
+  was right; the note beside it that the content object is untouched was not.
+
+Also: inside the site drive `Test-Path` hands a UNC path to the CMSite provider and answers
+false - `[System.IO.Directory]::Exists` instead. The inventory reads the moved packages as
+before (published applications are matched by content location, and the locations moved with
+them).
+
 ## Started from the console (2026-09-16, afternoon)
 
 `Console\SCCMAppHelper.xml` + `Console\Install-ConsoleExtension.ps1`: an Executable action on
