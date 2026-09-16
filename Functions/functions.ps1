@@ -1331,7 +1331,7 @@ function Get-InstallerEngine {
 <#
     The switches per engine, also for what a winget manifest calls the
     installer type (inno, nullsoft, burn, exe). 'exe' and 'unknown' get /S,
-    which fits NSIS and is a guess for everything else - the note says so and
+    the NSIS switch and a guess for everything else - the note says so and
     goes into the command as a comment.
 #>
 function Get-InstallerEngineSwitch {
@@ -1343,9 +1343,9 @@ function Get-InstallerEngineSwitch {
         'nullsoft'       { return [pscustomobject]@{ Engine = 'nsis';           Install = '/S';                                       Uninstall = '/S';                                       Note = '' } }
         '7zip'           { return [pscustomobject]@{ Engine = '7zip';           Install = '/S';                                       Uninstall = '/S';                                       Note = '' } }
         'burn'           { return [pscustomobject]@{ Engine = 'burn';           Install = '/quiet /norestart';                        Uninstall = '/quiet /norestart';                        Note = '' } }
-        'installshield'  { return [pscustomobject]@{ Engine = 'installshield';  Install = '/s /v"/qn REBOOT=ReallySuppress"';         Uninstall = '/s';                                       Note = 'InstallShield: /s /v"/qn" for an MSI based setup, /s alone for InstallScript - check the vendor''s notes' } }
-        'vsbootstrapper' { return [pscustomobject]@{ Engine = 'vsbootstrapper'; Install = '--quiet --norestart --wait';               Uninstall = '--quiet --norestart --wait';               Note = 'Visual Studio style bootstrapper: --wait matters, without it the installer returns before it is done' } }
-        default          { return [pscustomobject]@{ Engine = 'unknown';        Install = '/S';                                       Uninstall = '/S';                                       Note = '/S fits NSIS and is a guess - the installer kind could not be told' } }
+        'installshield'  { return [pscustomobject]@{ Engine = 'installshield';  Install = '/s /v"/qn REBOOT=ReallySuppress"';         Uninstall = '/s';                                       Note = 'InstallShield: /s /v"/qn" for MSI-based setups, /s for InstallScript - check the vendor documentation' } }
+        'vsbootstrapper' { return [pscustomobject]@{ Engine = 'vsbootstrapper'; Install = '--quiet --norestart --wait';               Uninstall = '--quiet --norestart --wait';               Note = 'Visual Studio-style bootstrapper: --wait is required, otherwise the installer returns before it has finished' } }
+        default          { return [pscustomobject]@{ Engine = 'unknown';        Install = '/S';                                       Uninstall = '/S';                                       Note = 'installer type could not be detected - /S is the NSIS switch, verify before deploying' } }
     }
 }
 

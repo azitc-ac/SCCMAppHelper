@@ -282,7 +282,7 @@ version resource, but in the strings of its stub: `Inno Setup`, `Nullsoft` (NSIS
 reads that from the file (`Get-InstallerEngine`) wherever it has one - From EXE in the editor,
 an installer picked from disk, the file winget downloaded, and on Edit the installer in
 `Files\` of an existing package whose uninstall field is empty - and fills both commands. An
-installer it cannot place gets `/S` with a comment saying so; only then does the From EXE
+installer of unknown type gets `/S` with a comment saying so; only then does the From EXE
 warning appear.
 
 | Engine | Install | Uninstall (`-AdditionalArgumentList`) |

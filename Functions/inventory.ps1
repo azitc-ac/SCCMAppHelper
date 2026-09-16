@@ -656,7 +656,7 @@ function ConvertTo-FileAppRow {
         $app.Version         = [string]$props['ProductVersion']
         $app.DetectionMethod = 'Registry'
         # The engine that built the EXE decides both switches (Get-InstallerEngine);
-        # what could not be told gets /S and says so in the command.
+        # an installer of unknown type gets /S, and the command says so.
         $engine = Get-InstallerEngine -Path $Path
         $app.InstallCmd      = Get-ExeInstallCommand -FileName $fileName -Engine $engine
         if ($app.Name) { $app.UninstallCmd = Get-ExeUninstallCommand -Name $app.Name -Engine $engine }

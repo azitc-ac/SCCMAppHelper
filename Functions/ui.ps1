@@ -919,7 +919,7 @@ function Open-EditDialog {
                 Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('DetectionMethod')                     -Value 'Registry'
                 # The engine that built the file decides both switches; the
                 # strings of the installer's stub say which one it is
-                # (Get-InstallerEngine). Only an installer the scan cannot place
+                # (Get-InstallerEngine). Only an installer the scan cannot identify
                 # gets the /S guess - and then the warning, because the wrong
                 # switch does not fail loudly: the installer ignores it, waits
                 # for a click nobody can give it in session 0, and the
@@ -930,12 +930,12 @@ function Open-EditDialog {
                 $nameNow = $(if ($textBoxes.Contains('Name')) { [string]$textBoxes['Name'].Text } else { '' }); if (-not $nameNow) { $nameNow = [string]$props['ProductName'] }
                 if ($nameNow) { Set-IfPresent -TextBoxes $textBoxes -CandidateKeys @('UninstallCmd') -Value (Get-ExeUninstallCommand -Name $nameNow -Engine $engine) }
                 if ($textBoxes.Contains('InstallCmd')) {
-                    $textBoxes['InstallCmd'].ToolTip = $(if ($engine.Engine -eq 'unknown') { 'The silent switch depends on the installer kind - /S fits NSIS, and is only a guess here.' } else { 'Silent switch of the ' + $engine.Engine + ' engine, read from the installer.' })
+                    $textBoxes['InstallCmd'].ToolTip = $(if ($engine.Engine -eq 'unknown') { 'The installer type could not be detected: /S is the NSIS switch and only a guess here.' } else { 'Silent switch for ' + $engine.Engine + ', read from the installer.' })
                 }
                 if ($engine.Engine -ne 'unknown') { return }
                 $null = Show-MessageDialog -Owner $window -Caption 'From EXE' -Buttons 'OK' -Icon 'Warning' -Text (
-                    "The install command was filled in with /S. That is the NSIS switch, and it is a guess: " +
-                    "an EXE does not say which installer built it.`n`n" +
+                    "The installer type could not be detected, so the install command was filled in with /S, " +
+                    "the NSIS switch - a guess.`n`n" +
                     "Check it against the installer:`n" +
                     "    NSIS                    /S`n" +
                     "    Inno Setup              /VERYSILENT /NORESTART`n" +
