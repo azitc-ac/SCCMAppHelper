@@ -996,7 +996,13 @@ function Build-AppPackages {
                 Write-Warn ("[{0}] is a legacy folder without a PSADT script - nothing to build. Put a PSADT structure in it, or add the application afresh." -f $row.AppFullName)
                 continue
             }
-            if ($row.HasDefinition) {
+            # A package the tool has not taken over yet is imported even when a
+            # row exists (a row from the older scripts next to their package):
+            # Import reads the script's sections into the row and keeps what
+            # the row already says; a plain rebuild would write the row over
+            # the script. Edge on the lab share was that case - row, MSI
+            # package, no tool blocks, status Foreign, and Build greyed out.
+            if ($row.HasDefinition -and ($row.IsManaged -or -not $row.HasPackage)) {
                 $packageRoot = New-AppPackage -App (ConvertTo-AppRecord -Source $row.Row) -Config $Config
                 if (-not $row.HasPackage -and $rows.Count -eq 1) { Open-PackageForEditing -PackageRoot $packageRoot -Config $Config }
             }

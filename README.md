@@ -91,8 +91,8 @@ come and what is in the way, checked in this order:
 
 | Status | Meaning | Next step |
 | --- | --- | --- |
-| `Legacy` | a folder without a PSADT script inside | add the application afresh |
-| `Foreign` | an application of that name exists, but this tool did not create it; publishing overwrites its detection | |
+| `Legacy` | a folder without a PSADT script inside - the tool cannot read or write it | published: Retire > Remove; not published: Delete; or Add > From file with the installer out of that folder, then delete it |
+| `Foreign` | an application of that name exists, but this tool did not create it, and the package carries none of the tool's blocks yet | Build / Import takes the package over (reads its script into the row); then `Imported, publish pending` |
 | `Path too long` | a file in the package is past 259 characters once addressed over UNC; publishing would be refused | rename the folder, or shorten inside |
 | `Published, no package` | published by this tool, the folder is gone | retire, or build again |
 | `Published, changed` | the package folder differs from what the site last received | publish again |

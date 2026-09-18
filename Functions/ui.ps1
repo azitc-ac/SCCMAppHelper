@@ -332,8 +332,8 @@ function Show-InventoryDialog {
         $editButton.IsEnabled    = $one -and ($usable.Count -eq 1) -and [bool]$selected[0].HasDefinition
         $versionButton.IsEnabled = $one -and [bool]$selected[0].HasDefinition   # the template is the row
         $deleteButton.IsEnabled  = (@($selected | Where-Object { ($_.HasDefinition -or $_.HasPackage) -and -not $_.IsPublished }).Count -gt 0)
-        # only where Add and Edit have not already done it: a definition without a package, a folder without a definition
-        $buildButton.IsEnabled   = (@($usable | Where-Object { ($_.HasDefinition -and -not $_.HasPackage) -or ($_.HasPackage -and -not $_.HasDefinition -and -not $_.IsLegacy) }).Count -gt 0)
+        # only where Add and Edit have not already done it: a definition without a package, a folder without a definition, a package the tool has not taken over yet
+        $buildButton.IsEnabled   = (@($usable | Where-Object { ($_.HasDefinition -and -not $_.HasPackage) -or ($_.HasPackage -and -not $_.IsLegacy -and (-not $_.HasDefinition -or -not $_.IsManaged)) }).Count -gt 0)
         $publishButton.IsEnabled = (@($usable | Where-Object { -not $_.IsLegacy -and ($_.HasDefinition -or $_.HasPackage) }).Count -gt 0)
     }
     & $syncButtons
