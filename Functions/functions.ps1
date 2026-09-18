@@ -2498,12 +2498,21 @@ function Import-AppPackage {
 
     # The hand written commands become the tool's block, so the row is the
     # source of truth from here on. Same lines, only wrapped.
+    # An MSI package gets the same Install and Uninstall commands a build writes
+    # (Start-ADTMsiProcess on the MSI in Files): its row has none, and without
+    # a block written the script kept no trace of the tool - the package stayed
+    # "Foreign" after the import, and an install ran PSADT's zero-config path,
+    # which is off as soon as AppName is set (see New-AppPackage).
+    $packageMsi = Get-PackageMsi -ContentRoot $content
     foreach ($section in @($script:PackagePhases.Keys)) {
         $command = [string]$app.($script:PackagePhases[$section])
+        if ($packageMsi -and $section -in 'Install', 'Uninstall') { $command = "Start-ADTMsiProcess -Action $section -FilePath '$($packageMsi.Name)'" }
         if (-not $command) { continue }
         switch (Set-PackageCommand -FilePath $adt.Path -Section $section -Command $command -TakeOver -Verbatim:($section -notin 'Install', 'Uninstall')) {
             'taken over'   { Write-Ok   "$section command taken over into the tool's block." }
             'inserted'     { Write-Ok   "$section command written into the package." }
+            'replaced'     { Write-Ok   "$section command updated." }
+            'unchanged'    { Write-Info "$section command already in the package." }
             'hand written' { Write-Warn "The $section section differs from the row - left as it is." }
         }
     }
