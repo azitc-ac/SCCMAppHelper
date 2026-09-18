@@ -1708,7 +1708,7 @@ function New-AppPackage {
     $packageRoot  = Join-Path $workRoot $appFullName
     $contentPath  = Get-PackageContentPath -PackageRoot $packageRoot -Config $Config
 
-    Write-Step "Creating package: $appFullName"
+    Write-Step "Building package: $appFullName"
 
     if ((Test-Path -LiteralPath $packageRoot) -and $Config.removeExistingPackageDirOnEachRun) {
         Write-Warn "Removing existing package directory: $packageRoot"
@@ -1746,6 +1746,13 @@ function New-AppPackage {
     # by an explicit Start-ADTMsiProcess written into the Install and Uninstall blocks.
     Set-ADTAppMetadata -ContentRoot $contentPath -Publisher $App.Publisher -Name $App.Name -Version $App.Version -Author $author
     Write-Ok 'PSADT script metadata filled in.'
+
+    # The installer goes into Files\ first. Until 2026-09-18 it was moved in after the
+    # commands were written and the checks run, so the first build of a package from a
+    # downloaded MSI saw no MSI in Files: it warned "EXE package without UninstallCmd" and
+    # "ProductCode set, but no MSI in Files" about an MSI, and wrote the EXE-style commands -
+    # only the rebuild after an Edit got it right.
+    if ($InstallerPath) { Copy-PackageInstaller -ContentRoot $contentPath -InstallerPath $InstallerPath -Config $Config }
 
     # What this package actually installs decides the commands, which foreign installations
     # the pre-install block may remove, and whether the detection can trust a ProductCode.
@@ -1807,8 +1814,6 @@ function New-AppPackage {
             'no marker' { Write-Warn 'No pre-install marker in the PSADT script - the uninstall of previous versions was not written.' }
         }
     }
-
-    if ($InstallerPath) { Copy-PackageInstaller -ContentRoot $contentPath -InstallerPath $InstallerPath -Config $Config }
 
     # Measured here, with the installer in place, so a package that ConfigMgr
     # would refuse is known before anyone tries to publish it.

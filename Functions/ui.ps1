@@ -282,10 +282,10 @@ function Show-InventoryDialog {
     $folderButton  = & $newButton 'Open folder'   'OpenFolder' 'Open the package folder of the selected row, or the share' $left
 
     $addButton     = & $newButton 'Add...'              'Add'        'Add an application: from winget, from an installer file, or a blank record' $right
-    $versionButton = & $newButton 'New version...'      'NewVersion' 'The selected application in a newer version - resolved from winget, or from a file' $right
+    $versionButton = & $newButton 'New version...'      'NewVersion' 'The selected application in a newer version: name, detection and commands carried over, version and installer from winget or a file; Publish then supersedes the old version' $right
     $editButton    = & $newButton 'Edit'                'Edit'       'Edit the definition; a package that exists is rebuilt from it' $right
     $deleteButton  = & $newButton 'Delete definition'   'Delete'     'Delete the definition and the package folder of a version that is not published; published versions: Retire > Remove' $right
-    $buildButton   = & $newButton 'Build package'       'Build'      'Create or refresh the package on the share from the definition' $right
+    $buildButton   = & $newButton 'Build / Import'      'Build'      'Build the package of a definition that has none, or import a package folder the list does not know. Add and Edit build by themselves' $right
     $publishButton = & $newButton 'Publish'             'Publish'    'Create or update the application in ConfigMgr: deployment type, content, collections, deployments, supersedence' $right
     $retireButton  = & $newButton 'Retire...'           'Retire'     'Stop deploying a version, or delete it and everything that belongs to it' $right
     $closeButton   = & $newButton 'Close'               'Cancel'     'Close the tool' $right
@@ -330,7 +330,8 @@ function Show-InventoryDialog {
         $editButton.IsEnabled    = $one -and ($usable.Count -eq 1)
         $versionButton.IsEnabled = $one
         $deleteButton.IsEnabled  = (@($selected | Where-Object { ($_.HasDefinition -or $_.HasPackage) -and -not $_.IsPublished }).Count -gt 0)
-        $buildButton.IsEnabled   = (@($usable | Where-Object { $_.HasDefinition -or $_.HasPackage }).Count -gt 0)
+        # only where Add and Edit have not already done it: a definition without a package, a folder without a definition
+        $buildButton.IsEnabled   = (@($usable | Where-Object { ($_.HasDefinition -and -not $_.HasPackage) -or ($_.HasPackage -and -not $_.HasDefinition -and -not $_.IsLegacy) }).Count -gt 0)
         $publishButton.IsEnabled = (@($usable | Where-Object { -not $_.IsLegacy -and ($_.HasDefinition -or $_.HasPackage) }).Count -gt 0)
     }
     & $syncButtons

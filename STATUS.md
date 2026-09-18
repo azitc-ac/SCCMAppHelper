@@ -36,7 +36,25 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
-## Retire reads in 5 s instead of 34, and Remove removes everything (2026-09-16, night)
+## The installer goes into Files before the checks (2026-09-18)
+
+Adding PuTTY from winget - an MSI - the build warned "EXE package without UninstallCmd" and
+"ProductCode set, but no MSI in Files", and only the rebuild after an Edit was right. The log
+had the order: the warnings and the commands came before "Installer moved into Files". So the
+first build of every MSI package from winget or a picked file wrote the EXE-style script
+(empty Install block), and the MSI commands appeared only on the next build. Now the installer
+is moved into `Files\` first; replayed with the PuTTY MSI back in `_DL`: no warnings,
+`Start-ADTMsiProcess -Action Install/Uninstall -FilePath 'putty-64bit-0.85-installer.msi'` on
+the first build.
+
+The user also asked what **Build package** is for when Add builds by itself, and how **New
+version** differs from **Add**. Build is now **Build / Import**, enabled only for the two cases
+Add and Edit do not cover - a definition without a package (an Apps.csv copied into a new
+environment, a folder that was deleted) and a package folder without a definition (take-over) -
+and the step in the log says "Building package", the same word as the button. New version keeps
+name, detection and commands of the selected row and takes version and installer from winget or
+a file, so Publish supersedes the old version; Add starts from nothing. Both tooltips say so.
+
 
 `Get-CMApplicationInventory` asked the provider twice per application - `Get-CMApplicationDeployment
 -Name` and `Get-CMDeviceCollection -Name` per owned pattern - and parsed every package XML into a

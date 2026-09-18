@@ -919,7 +919,7 @@ function Edit-AppDefinition {
 
     if ($InventoryRow.HasPackage -and $keyChanged) {
         $null = Show-MessageDialog -Caption 'Definition edited' -Buttons 'OK' -Icon 'Information' -Text (
-            "The name or version changed. The package folder`n`n{0}`n`nkeeps its name - Build package creates a new one for `"{1} - {2}`"." -f
+            "The name or version changed. The package folder`n`n{0}`n`nkeeps its name - Build / Import creates a new one for `"{1} - {2}`"." -f
             $InventoryRow.PackageRoot, $edited.Name, $edited.Version)
         return $true
     }
