@@ -99,7 +99,8 @@ come and what is in the way, checked in this order:
 | `Published` | all in step | |
 | `No installer` | a package, but nothing in `Files\` | put the installer in |
 | `Ready to publish` | a package with content, not on the site | publish |
-| `Definition only` | a row without a package | build |
+| `Ready to import` | a package folder the list does not know, not on the site | Build / Import takes it over |
+| `Ready to build` | a row without a package | Build / Import builds it |
 
 `Published, changed` comes from the fingerprint of the content the deployment type remembers,
 compared against the folder. The **Site** column carries the numbers: deployments, and where

@@ -83,7 +83,7 @@ function Show-InventoryDialog {
         [pscustomobject]@{ Name = 'On the share, not in the site';      Test = { $_.HasPackage -and -not $_.IsPublished } },
         [pscustomobject]@{ Name = 'In the site, not on the share';      Test = { $_.IsPublished -and -not $_.HasPackage } },
         [pscustomobject]@{ Name = 'Changed since publishing';           Test = { $_.SourceChanged } },
-        [pscustomobject]@{ Name = 'Definition only';                    Test = { $_.HasDefinition -and -not $_.HasPackage -and -not $_.IsPublished } },
+        [pscustomobject]@{ Name = 'Ready to build';                     Test = { $_.HasDefinition -and -not $_.HasPackage -and -not $_.IsPublished } },
         [pscustomobject]@{ Name = 'Without definition';                 Test = { -not $_.HasDefinition } },
         [pscustomobject]@{ Name = 'Legacy (no PSADT)';                  Test = { $_.IsLegacy } },
         [pscustomobject]@{ Name = 'Path too long';                      Test = { $_.OverlongFiles -gt 0 } }
@@ -151,7 +151,8 @@ function Show-InventoryDialog {
                         @('Published, changed', 'DarkOrange'),
                         @('Published, no package', 'DarkOrange'),
                         @('No installer', 'DarkOrange'),
-                        @('Definition only', 'Gray'),
+                        @('Ready to build', 'DodgerBlue'),
+                        @('Ready to import', 'DodgerBlue'),
                         @('Imported, publish pending', 'DarkOrange'),
                         @('Foreign', 'Firebrick'),
                         @('Legacy', 'Firebrick'))) {

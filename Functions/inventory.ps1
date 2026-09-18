@@ -478,8 +478,9 @@ function Get-AppInventory {
             elseif ($row.IsPublished -and $row.SourceChanged)          { 'Published, changed' }
             elseif ($row.IsPublished)                                  { 'Published' }
             elseif ($row.HasPackage -and $row.FilesCount -eq 0)        { 'No installer' }
+            elseif ($row.HasPackage -and -not $row.HasDefinition)     { 'Ready to import' }    # a folder the list does not know: Build / Import takes it over
             elseif ($row.HasPackage)                                   { 'Ready to publish' }
-            else                                                       { 'Definition only' }
+            else                                                       { 'Ready to build' }     # a definition without a package: Build / Import builds it
 
         # What the site says in numbers, in one cell.
         if (-not $siteRead)            { $row.SiteInfo = 'not read' }

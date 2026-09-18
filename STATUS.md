@@ -51,7 +51,7 @@ The user also asked what **Build package** is for when Add builds by itself, and
 version** differs from **Add**. Build is now **Build / Import**, enabled only for the two cases
 Add and Edit do not cover - a definition without a package (an Apps.csv copied into a new
 environment, a folder that was deleted) and a package folder without a definition (take-over) -
-and the step in the log says "Building package", the same word as the button. New version keeps
+and the step in the log says "Building package", the same word as the button. The two rows it is for say so as their status: `Ready to build` (was `Definition only`) and `Ready to import` (was `Ready to publish`, which hid that the folder had no row). New version keeps
 name, detection and commands of the selected row and takes version and installer from winget or
 a file, so Publish supersedes the old version; Add starts from nothing. Both tooltips say so.
 
