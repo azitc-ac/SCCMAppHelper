@@ -328,8 +328,9 @@ function Show-InventoryDialog {
         # A legacy folder - no PSADT script - is shown and not touched: nothing
         # can be read from it, nothing written into it.
         $usable = @($selected | Where-Object { -not $_.IsLegacy -or $_.HasDefinition })
-        $editButton.IsEnabled    = $one -and ($usable.Count -eq 1)
-        $versionButton.IsEnabled = $one
+        # Edit is for the row in Apps.csv; a folder without one is imported first (Build / Import)
+        $editButton.IsEnabled    = $one -and ($usable.Count -eq 1) -and [bool]$selected[0].HasDefinition
+        $versionButton.IsEnabled = $one -and [bool]$selected[0].HasDefinition   # the template is the row
         $deleteButton.IsEnabled  = (@($selected | Where-Object { ($_.HasDefinition -or $_.HasPackage) -and -not $_.IsPublished }).Count -gt 0)
         # only where Add and Edit have not already done it: a definition without a package, a folder without a definition
         $buildButton.IsEnabled   = (@($usable | Where-Object { ($_.HasDefinition -and -not $_.HasPackage) -or ($_.HasPackage -and -not $_.HasDefinition -and -not $_.IsLegacy) }).Count -gt 0)

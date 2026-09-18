@@ -884,12 +884,17 @@ function Edit-AppDefinition {
         return $false
     }
 
-    $app  = ConvertTo-AppRecord -Source $InventoryRow.Row
+    # A package the list only knows from the share or the site has no row to
+    # edit: the editor would open empty, and OK would rebuild the package from
+    # that emptiness, over the commands the foreign script carries. Build /
+    # Import reads them into a row first; Edit is for the row.
     if (-not $InventoryRow.HasDefinition) {
-        $app.Name    = $InventoryRow.Name
-        $app.Version = $InventoryRow.Version
-        $app.Publisher = $InventoryRow.Publisher
+        $info['Note'] = 'No definition yet. Build / Import reads the package into a row of Apps.csv - then the row can be edited.'
+        $null = Open-EditDialog -Info $info -ReadOnly -title ('View: ' + $InventoryRow.AppFullName) -PropertyOrder @()
+        return $false
     }
+
+    $app  = ConvertTo-AppRecord -Source $InventoryRow.Row
     # An EXE package without an uninstall command removes nothing on uninstall
     # and supersedence. The installer in Files\ says which engine built it, and
     # that decides the switch - so the field comes filled in, and the user only
