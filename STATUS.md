@@ -36,7 +36,31 @@ Why: two installations - the lab server after `update.ps1`, a checkout being wor
 could not be told apart from the window, and `DEPLOYED-VERSION.txt` only exists where
 `update.ps1` ran.
 
-## The installer goes into Files before the checks (2026-09-18)
+## What the uninstall GUI knew (2026-09-29)
+
+Read `uninstall-Apps.ps1` of the user''s ps-tools repository - a GUI that removes installed
+applications from the four uninstall keys - and took what applies here:
+
+* **A QuietUninstallString ends the search.** PSADT uses it as the command line (module source:
+  `QuietUninstallString` before `UninstallString`) and appends `-AdditionalArgumentList` on top,
+  so the `/S` the generated pre-install block added to every EXE entry landed behind a command
+  that was already silent - noise at best, a parse error at worst. The block now adds no switch
+  where the entry carries one.
+* **The entry says more than the file name.** Two engines the block could not tell apart before,
+  both recognised from the registry entry the way the GUI does it: a WiX Burn bundle by
+  `BundleProviderKey`/`BundleCachePath` (`/uninstall /quiet /norestart` - `/S` did nothing there)
+  and Squirrel by `Update.exe --uninstall` (`-s`). InstallShield also by `/removeonly`.
+  Squirrel is in the engine table now as well.
+* Order from the GUI, kept: MSI, then the vendor''s quiet command, then the known engines, then
+  the `/S` guess.
+
+Not taken over, and worth knowing: the GUI counts **1641** (reboot initiated) and **1605**
+(product not installed) as success. A deployment type this tool publishes carries no exit code
+list at all (the DT XML has no `ExitCode` nodes; the client applies its defaults, which the
+troubleshooter reads as success 0, 1707 and reboot 3010) - so an installer that triggers a hard
+reboot, and an uninstall of something already gone, both count as failures. `Add-CMScriptDeploymentType`
+has no parameter for it; setting the list would mean writing the DT XML by hand. Open.
+
 
 Adding PuTTY from winget - an MSI - the build warned "EXE package without UninstallCmd" and
 "ProductCode set, but no MSI in Files", and only the rebuild after an Edit was right. The log

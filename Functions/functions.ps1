@@ -1296,8 +1296,11 @@ function Test-AppFlag {
     'unknown', where /S remains the guess it always was.
 
     The uninstall switch is what Uninstall-ADTApplication hands to the
-    product's UninstallString as -AdditionalArgumentList (it prefers a
-    QuietUninstallString when the uninstall key has one).
+    product's uninstall command as -AdditionalArgumentList. PSADT takes the
+    QuietUninstallString when the uninstall key has one and the UninstallString
+    otherwise (measured in the module source), and appends what it is given -
+    so a switch is only worth adding where the vendor did not supply a silent
+    command of its own.
 #>
 function Get-InstallerEngine {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -1320,6 +1323,7 @@ function Get-InstallerEngine {
         elseif ($ascii -match 'Nullsoft' -or $unicode -match 'Nullsoft')                   { $engine = 'nsis' }
         elseif ($ascii -match '\.wixburn')                                                  { $engine = 'burn' }
         elseif ($ascii -match 'InstallShield' -or $unicode -match 'InstallShield')         { $engine = 'installshield' }
+        elseif ($ascii -match 'Squirrel' -or $unicode -match 'Squirrel')                   { $engine = 'squirrel' }
         elseif ($description -match '7-Zip Installer')                                      { $engine = '7zip' }
         elseif ($description -match '^vs_|SSMS Installer|Visual Studio Installer')          { $engine = 'vsbootstrapper' }
     }
@@ -1342,6 +1346,7 @@ function Get-InstallerEngineSwitch {
         'nsis'           { return [pscustomobject]@{ Engine = 'nsis';           Install = '/S';                                       Uninstall = '/S';                                       Note = '' } }
         'nullsoft'       { return [pscustomobject]@{ Engine = 'nsis';           Install = '/S';                                       Uninstall = '/S';                                       Note = '' } }
         '7zip'           { return [pscustomobject]@{ Engine = '7zip';           Install = '/S';                                       Uninstall = '/S';                                       Note = '' } }
+        'squirrel'       { return [pscustomobject]@{ Engine = 'squirrel';       Install = '--silent';                                 Uninstall = '-s';                                       Note = '' } }
         'burn'           { return [pscustomobject]@{ Engine = 'burn';           Install = '/quiet /norestart';                        Uninstall = '/quiet /norestart';                        Note = '' } }
         'installshield'  { return [pscustomobject]@{ Engine = 'installshield';  Install = '/s /v"/qn REBOOT=ReallySuppress"';         Uninstall = '/s';                                       Note = 'InstallShield: /s /v"/qn" for MSI-based setups, /s for InstallScript - check the vendor documentation' } }
         'vsbootstrapper' { return [pscustomobject]@{ Engine = 'vsbootstrapper'; Install = '--quiet --norestart --wait';               Uninstall = '--quiet --norestart --wait';               Note = 'Visual Studio-style bootstrapper: --wait is required, otherwise the installer returns before it has finished' } }
@@ -1487,17 +1492,33 @@ foreach ($component in $components) {
         # would empty the shared folder and leave the MSI registration behind as a leftover.
         Uninstall-ADTApplication -Name $component.Name -ApplicationType MSI -FilterScript $previousFilter
         # An EXE uninstaller runs interactive unless told otherwise, and under SYSTEM nobody
-        # can click - it would hang until the deployment's timeout. The silent switch depends
-        # on the setup engine; PSADT prefers a QuietUninstallString when the entry has one.
+        # can click - it would hang until the deployment's timeout. What switch it takes is
+        # decided by the entry in the registry, in this order:
+        #
+        #   QuietUninstallString  the vendor's own silent command. PSADT uses it as the
+        #                         command line, so no switch is added on top - appending /S
+        #                         to "unins000.exe /VERYSILENT" or to an msiexec line is at
+        #                         best noise, at worst a parse error.
+        #   BundleProviderKey     a WiX Burn bundle: /uninstall /quiet /norestart
+        #   update.exe --uninstall  Squirrel (Teams, Discord and their kind): -s
+        #   unins*.exe            Inno Setup
+        #   -runfromtemp, /removeonly, InstallShield
+        #   anything else         /S - NSIS, 7-Zip and most others
+        #
         $exeEntries = @($found | Where-Object { -not (($_.WindowsInstaller -eq 1) -or ($_.WindowsInstaller -eq $true)) })
         foreach ($silent in @($exeEntries | ForEach-Object {
-                    switch -Regex ([string]$_.UninstallString) {
+                    $entry = $_
+                    if (-not [string]::IsNullOrWhiteSpace([string]$entry.QuietUninstallString)) { return '' }
+                    if ($entry.PSObject.Properties.Name -contains 'BundleProviderKey' -or $entry.PSObject.Properties.Name -contains 'BundleCachePath') { return '/uninstall /quiet /norestart' }
+                    switch -Regex ([string]$entry.UninstallString) {
+                        'update\.exe.*--uninstall'                       { '-s' }                                        # Squirrel
                         'unins\d*\.exe'                                  { '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' }   # Inno Setup
-                        '/[Ii]\{|InstallShield|setup\.exe.*-runfromtemp' { '/s' }                                        # InstallShield
+                        '/[Ii]\{|InstallShield|setup\.exe.*-runfromtemp|/removeonly' { '/s' }                            # InstallShield
                         default                                          { '/S' }                                        # NSIS, 7-Zip, most others
                     }
                 } | Select-Object -Unique)) {
-            Uninstall-ADTApplication -Name $component.Name -ApplicationType EXE -FilterScript $previousFilter -AdditionalArgumentList $silent
+            if ($silent) { Uninstall-ADTApplication -Name $component.Name -ApplicationType EXE -FilterScript $previousFilter -AdditionalArgumentList $silent }
+            else { Uninstall-ADTApplication -Name $component.Name -ApplicationType EXE -FilterScript $previousFilter }
         }
         Write-ADTLogEntry -Message "Uninstall of '$($component.Name)' complete."
     } else {
