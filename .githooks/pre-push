@@ -1,0 +1,20 @@
+#!/bin/sh
+# Pre-push: reicht an den gemeinsamen, projektübergreifenden pre-push-Check weiter
+# (geschützte Begriffe: Kunden-/Personennamen, Konditionen). Die Begriffe stehen
+# nicht hier.
+#
+# Nötig, weil dieses Repo core.hooksPath lokal auf .githooks setzt – ein global
+# eingerichteter Hook-Pfad greift dann nicht mehr. Fehlt der gemeinsame Check
+# (frischer Klon, Fremdbeitrag), warnt der Hook nur und lässt den Push durch.
+
+for kandidat in \
+    "${GESCHUETZT_PRE_PUSH:-}" \
+    "$HOME/claude-tools/general/git-hooks/pre-push" \
+    "$HOME/.claude/repos/claude-tools/general/git-hooks/pre-push"; do
+    if [ -n "$kandidat" ] && [ -x "$kandidat" ]; then
+        exec "$kandidat" "$@"
+    fi
+done
+
+echo "pre-push: gemeinsamer Check (claude-tools/general/git-hooks/pre-push) nicht gefunden – Push UNGEPRÜFT." >&2
+exit 0
